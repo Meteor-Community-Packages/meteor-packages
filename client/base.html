@@ -1,0 +1,22 @@
+<body>
+  {{> ComponentsList}}
+</body>
+
+<template name="ComponentsList">
+  {{#each components}}
+    {{> Component}}
+  {{/each}}
+</template>
+
+<template name="Component">
+  <div class="component">
+    <dl>
+      <dt>Name</dt>
+      <dd>{{packageName}}</dd>
+      <dt>Description</dt>
+      <dd>{{description}}</dd>
+      <dt>Long description</dt>
+      <dd>{{#markdown}}{{longDescription}}{{/markdown}}</dd>
+    </dl>
+  </div>
+</template>
