@@ -1,4 +1,3 @@
 Meteor.publish 'packages', ->
   Versions.find
-    'dependencies.peerlibrary:blaze-components':
-      $exists: true
+    'dependencies.packageName': 'peerlibrary:blaze-components'
