@@ -7,6 +7,9 @@ Builds = new Mongo.Collection 'meteor.Builds'
 ReleaseTracks = new Mongo.Collection 'meteor.ReleaseTracks'
 ReleaseVersions = new Mongo.Collection 'meteor.ReleaseVersions'
 
+Versions._ensureIndex
+  packageName: 1
+
 # Version documents provided from Meteor API can contain dots in object keys which
 # is not allowed by MongoDB, so we transform document to a version without them.
 transformVersionDocument = (document) ->
