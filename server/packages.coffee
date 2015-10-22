@@ -147,6 +147,36 @@ insertLatestPackage = (document) ->
 Meteor.startup ->
   new Fiber ->
 
+    console.log "Starting latest packages observe"
+
+    initializing = true
+
+    # We reinitialize latest packages collection.
+    Versions.find({}).observeChanges
+      added: (id, fields) ->
+        insertLatestPackage _.extend {_id: id}, fields unless initializing
+
+      changed: (id, fields) ->
+        # Will possibly not update anything, if the change is for an older package.
+        LatestPackages.update id, fieldsToModifier fields
+
+      removed: (id) ->
+        oldPackage = LatestPackages.findOne id
+
+        # Package already removed?
+        return unless oldPackage
+
+        # We remove it.
+        LatestPackages.remove id
+
+        # We find the new latest package.
+        Versions.find(packageName: oldPackage.packageName).forEach (document, index, cursor) ->
+          insertLatestPackage document
+
+    initializing = false
+
+    console.log "Latest packages observe initialized"
+
     connection = DDP.connect 'packages.meteor.com'
 
     Defaults = new Mongo.Collection 'defaults', connection
@@ -166,35 +196,5 @@ Meteor.startup ->
             sync connection
           changed: (document, oldDocument) ->
             sync connection
-  .run()
-
-  new Fiber ->
-
-    console.log "Started computing latest packages"
-
-    # We reinitialize latest packages collection.
-    LatestPackages.remove {}
-    Versions.find({}).observeChanges
-      added: (id, fields) ->
-        insertLatestPackage _.extend {_id: id}, fields
-
-      changed: (id, fields) ->
-        # Will possibly not update anything, if the change is for an older package.
-        LatestPackages.update id, fieldsToModifier fields
-
-      removed: (id) ->
-        oldPackage = LatestPackages.findOne id
-
-        # Package already removed?
-        return unless oldPackage
-
-        # We remove it.
-        LatestPackages.remove id
-
-        # We find the new latest package.
-        Versions.find(packageName: oldPackage.packageName).forEach (document, index, cursor) ->
-          insertLatestPackage document
-
-    console.log "Finished computing latest packages"
 
   .run()
