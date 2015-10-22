@@ -1,1 +1,1 @@
-@Versions = new Mongo.Collection 'Versions'
+@LatestPackages = new Mongo.Collection 'meteor.LatestPackages'

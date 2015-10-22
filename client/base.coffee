@@ -8,7 +8,7 @@ class ComponentsList extends BlazeComponent
     'ComponentsList'
 
   components: ->
-    Versions.find()
+    LatestPackages.find()
 
 class Component extends BlazeComponent
   @register 'Component'

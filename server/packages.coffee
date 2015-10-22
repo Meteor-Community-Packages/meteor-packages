@@ -1,8 +1,9 @@
-SyncToken = new Mongo.Collection 'SyncToken'
-Packages = new Mongo.Collection 'Packages'
-Builds = new Mongo.Collection 'Builds'
-ReleaseTracks = new Mongo.Collection 'ReleaseTracks'
-ReleaseVersions = new Mongo.Collection 'ReleaseVersions'
+SyncToken = new Mongo.Collection 'meteor.SyncToken'
+Packages = new Mongo.Collection 'meteor.Packages'
+Versions = new Mongo.Collection 'meteor.Versions'
+Builds = new Mongo.Collection 'meteor.Builds'
+ReleaseTracks = new Mongo.Collection 'meteor.ReleaseTracks'
+ReleaseVersions = new Mongo.Collection 'meteor.ReleaseVersions'
 
 # Version documents provided from Meteor API can contain dots in object keys which
 # is not allowed by MongoDB, so we transform document to a version without them.
@@ -106,6 +107,41 @@ sync = (connection) ->
 
     return if result.upToDate
 
+fieldsToModifier = (fields) ->
+  modifier = {}
+
+  for name, value of fields
+    if _.isUndefined value
+      modifier.$unset = {} unless modifier.$unset
+      modifier.$unset[name] = ''
+    else
+      modifier.$set = {} unless modifier.$set
+      modifier.$set[name] = value
+
+  modifier
+
+insertLatestPackage = (document) ->
+  loop
+    existingDocument = LatestPackages.findOne
+      _id:
+        $ne: document._id
+      packageName: document.packageName
+
+    if existingDocument
+      if PackageVersion.lessThan existingDocument.version, document.version
+        # We have an older version, remove it.
+        LatestPackages.remove existingDocument._id
+        continue
+      else
+        # We have a newer version, don't do anything.
+        return
+    else
+      # We do not have any other version (anymore). Let's continue.
+      break
+
+  # TODO: Slight race condition here. There might be another document inserted between removal and this insertion.
+  LatestPackages.insert document
+
 Meteor.startup ->
   connection = DDP.connect 'packages.meteor.com'
   
@@ -126,3 +162,30 @@ Meteor.startup ->
           sync connection
         changed: (document, oldDocument) ->
           sync connection
+
+  console.log "Started computing latest packages"
+
+  # We reinitialize latest packages collection.
+  LatestPackages.remove {}
+  Versions.find({}).observeChanges
+    added: (id, fields) ->
+      insertLatestPackage _.extend {_id: id}, fields
+
+    changed: (id, fields) ->
+      # Will possibly not update anything, if the change is for an older package.
+      LatestPackages.update id, fieldsToModifier fields
+
+    removed: (id) ->
+      oldPackage = LatestPackages.findOne id
+
+      # Package already removed?
+      return unless oldPackage
+
+      # We remove it.
+      LatestPackages.remove id
+
+      # We find the new latest package.
+      Versions.find(packageName: oldPackage.packageName).forEach (document, index, cursor) ->
+        insertLatestPackage document
+
+  console.log "Finished computing latest packages"

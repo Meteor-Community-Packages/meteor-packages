@@ -21,3 +21,5 @@ random
 ejson
 spacebars
 check
+underscore
+package-version-parser
