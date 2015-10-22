@@ -21,12 +21,6 @@ sync = (connection) ->
   loop
     syncToken = SyncToken.findOne().syncToken
     result = connection.call 'syncNewPackageData', syncToken
-    
-    SyncToken.update
-      _id: 'syncToken'
-    ,
-      $set:
-        syncToken: result.syncToken
 
     if result.resetData
       Packages.remove {}
@@ -106,6 +100,12 @@ sync = (connection) ->
     console.log "Builds - all: #{Builds.find().count()}, new: #{newBuilds}, updated: #{updatedBuilds}" if newBuilds or updatedBuilds
     console.log "ReleaseTracks - all: #{ReleaseTracks.find().count()}, new: #{newReleaseTracks}, updated: #{updatedReleaseTracks}" if newReleaseTracks or updatedReleaseTracks
     console.log "ReleaseVersions - all: #{ReleaseVersions.find().count()}, new: #{newReleaseVersions}, updated: #{updatedReleaseVersions}" if newReleaseVersions or updatedReleaseVersions
+
+    SyncToken.update
+      _id: 'syncToken'
+    ,
+      $set:
+        syncToken: result.syncToken
 
     return if result.upToDate
 
