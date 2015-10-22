@@ -1,3 +1,5 @@
+Fiber = Npm.require 'fibers'
+
 SyncToken = new Mongo.Collection 'meteor.SyncToken'
 Packages = new Mongo.Collection 'meteor.Packages'
 Versions = new Mongo.Collection 'meteor.Versions'
@@ -143,49 +145,56 @@ insertLatestPackage = (document) ->
   LatestPackages.insert document
 
 Meteor.startup ->
-  connection = DDP.connect 'packages.meteor.com'
-  
-  Defaults = new Mongo.Collection 'defaults', connection
-  Changes = new Mongo.Collection 'changes', connection
+  new Fiber ->
 
-  connection.subscribe 'defaults', ->
-    try
-      SyncToken.insert
-        _id: 'syncToken'
-        syncToken: Defaults.findOne().syncToken
-    catch error
-      throw error unless /E11000 duplicate key error index:.*SyncToken\.\$_id/.test error.err
+    connection = DDP.connect 'packages.meteor.com'
 
-    connection.subscribe 'changes', ->
-      Changes.find().observe
-        added: (document) ->
-          sync connection
-        changed: (document, oldDocument) ->
-          sync connection
+    Defaults = new Mongo.Collection 'defaults', connection
+    Changes = new Mongo.Collection 'changes', connection
 
-  console.log "Started computing latest packages"
+    connection.subscribe 'defaults', ->
+      try
+        SyncToken.insert
+          _id: 'syncToken'
+          syncToken: Defaults.findOne().syncToken
+      catch error
+        throw error unless /E11000 duplicate key error index:.*SyncToken\.\$_id/.test error.err
 
-  # We reinitialize latest packages collection.
-  LatestPackages.remove {}
-  Versions.find({}).observeChanges
-    added: (id, fields) ->
-      insertLatestPackage _.extend {_id: id}, fields
+      connection.subscribe 'changes', ->
+        Changes.find().observe
+          added: (document) ->
+            sync connection
+          changed: (document, oldDocument) ->
+            sync connection
+  .run()
 
-    changed: (id, fields) ->
-      # Will possibly not update anything, if the change is for an older package.
-      LatestPackages.update id, fieldsToModifier fields
+  new Fiber ->
 
-    removed: (id) ->
-      oldPackage = LatestPackages.findOne id
+    console.log "Started computing latest packages"
 
-      # Package already removed?
-      return unless oldPackage
+    # We reinitialize latest packages collection.
+    LatestPackages.remove {}
+    Versions.find({}).observeChanges
+      added: (id, fields) ->
+        insertLatestPackage _.extend {_id: id}, fields
 
-      # We remove it.
-      LatestPackages.remove id
+      changed: (id, fields) ->
+        # Will possibly not update anything, if the change is for an older package.
+        LatestPackages.update id, fieldsToModifier fields
 
-      # We find the new latest package.
-      Versions.find(packageName: oldPackage.packageName).forEach (document, index, cursor) ->
-        insertLatestPackage document
+      removed: (id) ->
+        oldPackage = LatestPackages.findOne id
 
-  console.log "Finished computing latest packages"
+        # Package already removed?
+        return unless oldPackage
+
+        # We remove it.
+        LatestPackages.remove id
+
+        # We find the new latest package.
+        Versions.find(packageName: oldPackage.packageName).forEach (document, index, cursor) ->
+          insertLatestPackage document
+
+    console.log "Finished computing latest packages"
+
+  .run()
