@@ -218,7 +218,7 @@ MeteorPackages.latestPackagesObserve = ->
     if currentLastUpdated
       query =
         lastUpdated:
-          $gte: currentLastUpdated
+          $gte: new Date currentLastUpdated
     else
       query = {}
 
