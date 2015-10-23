@@ -12,7 +12,7 @@ Package.onUse(function (api) {
   api.use([
     'coffeescript',
     'mongo',
-    'ddp-client',
+    'ddp',
     'underscore',
     'package-version-parser'
   ]);
