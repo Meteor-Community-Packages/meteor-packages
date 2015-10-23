@@ -1,22 +1,21 @@
 Fiber = Npm.require 'fibers'
 
-SYNC_TOKEN_ID = 'syncToken'
-LAST_UPDATED_ID = 'lastUpdated'
+MeteorPackages.SYNC_TOKEN_ID = 'syncToken'
+MeteorPackages.LAST_UPDATED_ID = 'lastUpdated'
 
-SyncState = new Mongo.Collection 'meteor.SyncState'
-
-Packages = new Mongo.Collection 'meteor.Packages'
-Versions = new Mongo.Collection 'meteor.Versions'
-Builds = new Mongo.Collection 'meteor.Builds'
-ReleaseTracks = new Mongo.Collection 'meteor.ReleaseTracks'
-ReleaseVersions = new Mongo.Collection 'meteor.ReleaseVersions'
-
-Versions._ensureIndex
+MeteorPackages.Versions._ensureIndex
   packageName: 1
+MeteorPackages.Versions._ensureIndex
+  'dependencies.packageName': 1
+
+MeteorPackages.LatestPackages._ensureIndex
+  packageName: 1
+MeteorPackages.LatestPackages._ensureIndex
+  'dependencies.packageName': 1
 
 # Version documents provided from Meteor API can contain dots in object keys which
 # is not allowed by MongoDB, so we transform document to a version without them.
-transformVersionDocument = (document) ->
+MeteorPackages.transformVersionDocument = (document) ->
   if document.dependencies
     document.dependencies = for packageName, dependency of document.dependencies
       _.extend dependency,
@@ -24,24 +23,25 @@ transformVersionDocument = (document) ->
 
   document
 
-sync = (connection) ->
+MeteorPackages.sync = (connection) ->
   loop
-    syncToken = SyncState.findOne(SYNC_TOKEN_ID).syncToken
+    syncToken = @SyncState.findOne(@SYNC_TOKEN_ID).syncToken
     result = connection.call 'syncNewPackageData', syncToken
 
     if result.resetData
-      Packages.remove {}
-      Versions.remove {}
-      Builds.remove {}
-      ReleaseTracks.remove {}
-      ReleaseVersions.remove {}
+      @Packages.remove {}
+      @Versions.remove {}
+      @Builds.remove {}
+      @ReleaseTracks.remove {}
+      @ReleaseVersions.remove {}
 
     newPackages = 0
     updatedPackages = 0
     for packageRecord in result.collections?.packages or []
       try
-        {numberAffected, insertedId} = Packages.upsert packageRecord._id, packageRecord
+        {numberAffected, insertedId} = @Packages.upsert packageRecord._id, packageRecord
         if insertedId
+          assert.equal insertedId, packageRecord._id
           newPackages++
           updatedPackages += numberAffected - 1
         else
@@ -53,9 +53,10 @@ sync = (connection) ->
     updatedVersions = 0
     for version in result.collections?.versions or []
       try
-        version = transformVersionDocument version
-        {numberAffected, insertedId} = Versions.upsert version._id, version
+        version = @transformVersionDocument version
+        {numberAffected, insertedId} = @Versions.upsert version._id, version
         if insertedId
+          assert.equal insertedId, version._id
           newVersions++
           updatedVersions += numberAffected - 1
         else
@@ -67,8 +68,9 @@ sync = (connection) ->
     updatedBuilds = 0
     for build in result.collections?.builds or []
       try
-        {numberAffected, insertedId} = Builds.upsert build._id, build
+        {numberAffected, insertedId} = @Builds.upsert build._id, build
         if insertedId
+          assert.equal insertedId, build._id
           newBuilds++
           updatedBuilds += numberAffected - 1
         else
@@ -80,8 +82,9 @@ sync = (connection) ->
     updatedReleaseTracks = 0
     for releaseTrack in result.collections?.releaseTracks or []
       try
-        {numberAffected, insertedId} = ReleaseTracks.upsert releaseTrack._id, releaseTrack
+        {numberAffected, insertedId} = @ReleaseTracks.upsert releaseTrack._id, releaseTrack
         if insertedId
+          assert.equal insertedId, releaseTrack._id
           newReleaseTracks++
           updatedReleaseTracks += numberAffected - 1
         else
@@ -93,8 +96,9 @@ sync = (connection) ->
     updatedReleaseVersions = 0
     for releaseVersion in result.collections?.releaseVersions or []
       try
-        {numberAffected, insertedId} = ReleaseVersions.upsert releaseVersion._id, releaseVersion
+        {numberAffected, insertedId} = @ReleaseVersions.upsert releaseVersion._id, releaseVersion
         if insertedId
+          assert.equal insertedId, releaseVersion._id
           newReleaseVersions++
           updatedReleaseVersions += numberAffected - 1
         else
@@ -102,23 +106,23 @@ sync = (connection) ->
       catch error
         console.log error, releaseVersion
 
-    console.log "Packages - all: #{Packages.find().count()}, new: #{newPackages}, updated: #{updatedPackages}" if newPackages or updatedPackages
-    console.log "Versions - all: #{Versions.find().count()}, new: #{newVersions}, updated: #{updatedVersions}" if newVersions or updatedVersions
-    console.log "Builds - all: #{Builds.find().count()}, new: #{newBuilds}, updated: #{updatedBuilds}" if newBuilds or updatedBuilds
-    console.log "ReleaseTracks - all: #{ReleaseTracks.find().count()}, new: #{newReleaseTracks}, updated: #{updatedReleaseTracks}" if newReleaseTracks or updatedReleaseTracks
-    console.log "ReleaseVersions - all: #{ReleaseVersions.find().count()}, new: #{newReleaseVersions}, updated: #{updatedReleaseVersions}" if newReleaseVersions or updatedReleaseVersions
+    console.log "MeteorPackages.Packages - all: #{@Packages.find().count()}, new: #{newPackages}, updated: #{updatedPackages}" if newPackages or updatedPackages
+    console.log "MeteorPackages.Versions - all: #{@Versions.find().count()}, new: #{newVersions}, updated: #{updatedVersions}" if newVersions or updatedVersions
+    console.log "MeteorPackages.Builds - all: #{@Builds.find().count()}, new: #{newBuilds}, updated: #{updatedBuilds}" if newBuilds or updatedBuilds
+    console.log "MeteorPackages.ReleaseTracks - all: #{@ReleaseTracks.find().count()}, new: #{newReleaseTracks}, updated: #{updatedReleaseTracks}" if newReleaseTracks or updatedReleaseTracks
+    console.log "MeteorPackages.ReleaseVersions - all: #{@ReleaseVersions.find().count()}, new: #{newReleaseVersions}, updated: #{updatedReleaseVersions}" if newReleaseVersions or updatedReleaseVersions
 
     # We store the new token only after all data in the result has been processed. This assures
     # that if this run has been prematurely terminated, we restart again correctly next time.
-    SyncState.update
-      _id: SYNC_TOKEN_ID
+    @SyncState.update
+      _id: @SYNC_TOKEN_ID
     ,
       $set:
         syncToken: result.syncToken
 
     return if result.upToDate
 
-fieldsToModifier = (fields) ->
+MeteorPackages.fieldsToModifier = (fields) ->
   modifier = {}
 
   for name, value of fields
@@ -131,9 +135,9 @@ fieldsToModifier = (fields) ->
 
   modifier
 
-insertLatestPackage = (document) ->
+MeteorPackages.insertLatestPackage = (document) ->
   loop
-    existingDocument = LatestPackages.findOne
+    existingDocument = @LatestPackages.findOne
       _id:
         $ne: document._id
       packageName: document.packageName
@@ -141,7 +145,7 @@ insertLatestPackage = (document) ->
     if existingDocument
       if PackageVersion.lessThan existingDocument.version, document.version
         # We have an older version, remove it.
-        LatestPackages.remove existingDocument._id
+        @LatestPackages.remove existingDocument._id
         continue
       else
         # We have a newer version, don't do anything.
@@ -151,15 +155,16 @@ insertLatestPackage = (document) ->
       break
 
   # TODO: Slight race condition here. There might be another document inserted between removal and this insertion.
-  LatestPackages.insert document
+  {numberAffected, insertedId} = @LatestPackages.upsert document._id, document
+  assert.equal insertedId, document._id if insertedId
 
-latestPackagesObserve = ->
+MeteorPackages.latestPackagesObserve = ->
   console.log "Starting latest packages observe"
 
   try
     # We try to create the initial document.
-    SyncState.insert
-      _id: LAST_UPDATED_ID
+    @SyncState.insert
+      _id: @LAST_UPDATED_ID
       lastUpdated: null
   catch error
     throw error unless /E11000 duplicate key error index:.*SyncState\.\$_id/.test error.err
@@ -171,7 +176,7 @@ latestPackagesObserve = ->
   # callbacks called, we really processed them all. Otherwise we might set state but program might
   # terminate before we had a chance to process all observe callbacks. Which will mean that those
   # packages from pending observe callbacks will not be processed the next time the program runs.
-  updateSyncState = (newLastUpdated) ->
+  updateSyncState = (newLastUpdated) =>
     # We allow that in a series of observe callbacks the order of last updated timestamps is
     # not monotonic. In the case that last updated timestamps are not monotonic between
     # series of observe callbacks, we will have to (and do) restart the observe.
@@ -179,12 +184,12 @@ latestPackagesObserve = ->
       newestLastUpdated = newLastUpdated
 
     Meteor.clearTimeout timeoutHandle
-    timeoutHandle = Meteor.setTimeout ->
+    timeoutHandle = Meteor.setTimeout =>
       lastUpdated = newestLastUpdated
       newestLastUpdated = null
 
-      SyncState.update
-        _id: LAST_UPDATED_ID
+      @SyncState.update
+        _id: @LAST_UPDATED_ID
       ,
         $set:
           lastUpdated: lastUpdated
@@ -194,10 +199,9 @@ latestPackagesObserve = ->
   observeHandle = null
   currentLastUpdated = null
 
-  startObserve = ->
+  startObserve = =>
     observeHandle?.stop()
     observeHandle = null
-
 
     if currentLastUpdated
       query =
@@ -206,41 +210,41 @@ latestPackagesObserve = ->
     else
       query = {}
 
-    observeHandle = Versions.find(query).observeChanges
-      added: (id, fields) ->
-        insertLatestPackage _.extend {_id: id}, fields
+    observeHandle = @Versions.find(query).observeChanges
+      added: (id, fields) =>
+        @insertLatestPackage _.extend {_id: id}, fields
 
         updateSyncState fields.lastUpdated.valueOf()
 
-      changed: (id, fields) ->
+      changed: (id, fields) =>
         # Will possibly not update anything, if the change is for an older package.
-        LatestPackages.update id, fieldsToModifier fields
+        @LatestPackages.update id, @fieldsToModifier fields
 
         updateSyncState fields.lastUpdated.valueOf() if 'lastUpdated' of fields
 
-      removed: (id) ->
-        oldPackage = LatestPackages.findOne id
+      removed: (id) =>
+        oldPackage = @LatestPackages.findOne id
 
         # Package already removed?
         return unless oldPackage
 
         # We remove it.
-        LatestPackages.remove id
+        @LatestPackages.remove id
 
         # We find the new latest package.
-        Versions.find(packageName: oldPackage.packageName).forEach (document, index, cursor) ->
-          insertLatestPackage document
+        @Versions.find(packageName: oldPackage.packageName).forEach (document, index, cursor) =>
+          @insertLatestPackage document
 
-  lastUpdatedNewer = ->
+  lastUpdatedNewer = =>
     # We do not do anything, versions observe will handle that.
     # But we have to start the observe the first time if it is not yet running.
     startObserve() unless observeHandle
 
-  lastUpdatedOlder = ->
+  lastUpdatedOlder = =>
     # We have to restart the versions observe.
     startObserve()
 
-  updateLastUpdated = (newLastUpdated) ->
+  updateLastUpdated = (newLastUpdated) =>
     if not currentLastUpdated
       currentLastUpdated = newLastUpdated
       if currentLastUpdated
@@ -259,41 +263,41 @@ latestPackagesObserve = ->
       currentLastUpdated = newLastUpdated
       lastUpdatedNewer()
 
-  SyncState.find(LAST_UPDATED_ID).observe
-    added: (document) ->
+  @SyncState.find(@LAST_UPDATED_ID).observe
+    added: (document) =>
       updateLastUpdated document.lastUpdated?.valueOf() or null
 
-    changed: (document, oldDocument) ->
+    changed: (document, oldDocument) =>
       updateLastUpdated document.lastUpdated?.valueOf() or null
 
-    removed: (oldDocument) ->
+    removed: (oldDocument) =>
       updateLastUpdated null
 
   console.log "Latest packages observe initialized"
 
-subscribeToPackages = ->
+MeteorPackages.subscribeToPackages = ->
   connection = DDP.connect 'packages.meteor.com'
 
   Defaults = new Mongo.Collection 'defaults', connection
   Changes = new Mongo.Collection 'changes', connection
 
-  connection.subscribe 'defaults', ->
+  connection.subscribe 'defaults', =>
     try
-      SyncState.insert
-        _id: SYNC_TOKEN_ID
+      @SyncState.insert
+        _id: @SYNC_TOKEN_ID
         syncToken: Defaults.findOne().syncToken
     catch error
       throw error unless /E11000 duplicate key error index:.*SyncState\.\$_id/.test error.err
 
-    connection.subscribe 'changes', ->
-      Changes.find().observe
-        added: (document) ->
-          sync connection
-        changed: (document, oldDocument) ->
-          sync connection
+    connection.subscribe 'changes', =>
+      Changes.find({}).observe
+        added: (document) =>
+          @sync connection
+        changed: (document, oldDocument) =>
+          @sync connection
 
-Meteor.startup ->
-  new Fiber ->
-    latestPackagesObserve()
-    subscribeToPackages()
+MeteorPackages.startSyncing = ->
+  new Fiber =>
+    @latestPackagesObserve()
+    @subscribeToPackages()
   .run()
