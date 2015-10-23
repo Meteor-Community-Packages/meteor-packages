@@ -1,6 +1,10 @@
 Fiber = Npm.require 'fibers'
 
-SyncToken = new Mongo.Collection 'meteor.SyncToken'
+SYNC_TOKEN_ID = 'syncToken'
+LAST_UPDATED_ID = 'lastUpdated'
+
+SyncState = new Mongo.Collection 'meteor.SyncState'
+
 Packages = new Mongo.Collection 'meteor.Packages'
 Versions = new Mongo.Collection 'meteor.Versions'
 Builds = new Mongo.Collection 'meteor.Builds'
@@ -22,7 +26,7 @@ transformVersionDocument = (document) ->
 
 sync = (connection) ->
   loop
-    syncToken = SyncToken.findOne().syncToken
+    syncToken = SyncState.findOne(SYNC_TOKEN_ID).syncToken
     result = connection.call 'syncNewPackageData', syncToken
 
     if result.resetData
@@ -104,8 +108,10 @@ sync = (connection) ->
     console.log "ReleaseTracks - all: #{ReleaseTracks.find().count()}, new: #{newReleaseTracks}, updated: #{updatedReleaseTracks}" if newReleaseTracks or updatedReleaseTracks
     console.log "ReleaseVersions - all: #{ReleaseVersions.find().count()}, new: #{newReleaseVersions}, updated: #{updatedReleaseVersions}" if newReleaseVersions or updatedReleaseVersions
 
-    SyncToken.update
-      _id: 'syncToken'
+    # We store the new token only after all data in the result has been processed. This assures
+    # that if this run has been prematurely terminated, we restart again correctly next time.
+    SyncState.update
+      _id: SYNC_TOKEN_ID
     ,
       $set:
         syncToken: result.syncToken
@@ -147,21 +153,70 @@ insertLatestPackage = (document) ->
   # TODO: Slight race condition here. There might be another document inserted between removal and this insertion.
   LatestPackages.insert document
 
-Meteor.startup ->
-  new Fiber ->
+latestPackagesObserve = ->
+  console.log "Starting latest packages observe"
 
-    console.log "Starting latest packages observe"
+  try
+    # We try to create the initial document.
+    SyncState.insert
+      _id: LAST_UPDATED_ID
+      lastUpdated: null
+  catch error
+    throw error unless /E11000 duplicate key error index:.*SyncState\.\$_id/.test error.err
 
-    initializing = true
+  timeoutHandle = null
+  newestLastUpdated = null
 
-    # We reinitialize latest packages collection.
-    Versions.find({}).observeChanges
+  # Update sync state after 30 seconds of no updates. This assures that if there was a series of observe
+  # callbacks called, we really processed them all. Otherwise we might set state but program might
+  # terminate before we had a chance to process all observe callbacks. Which will mean that those
+  # packages from pending observe callbacks will not be processed the next time the program runs.
+  updateSyncState = (newLastUpdated) ->
+    # We allow that in a series of observe callbacks the order of last updated timestamps is
+    # not monotonic. In the case that last updated timestamps are not monotonic between
+    # series of observe callbacks, we will have to (and do) restart the observe.
+    if not newestLastUpdated or newestLastUpdated < newLastUpdated
+      newestLastUpdated = newLastUpdated
+
+    Meteor.clearTimeout timeoutHandle
+    timeoutHandle = Meteor.setTimeout ->
+      lastUpdated = newestLastUpdated
+      newestLastUpdated = null
+
+      SyncState.update
+        _id: LAST_UPDATED_ID
+      ,
+        $set:
+          lastUpdated: lastUpdated
+    ,
+      30 * 1000 # ms
+
+  observeHandle = null
+  currentLastUpdated = null
+
+  startObserve = ->
+    observeHandle?.stop()
+    observeHandle = null
+
+
+    if currentLastUpdated
+      query =
+        lastUpdated:
+          $gte: currentLastUpdated
+    else
+      query = {}
+
+    observeHandle = Versions.find(query).observeChanges
       added: (id, fields) ->
-        insertLatestPackage _.extend {_id: id}, fields unless initializing
+        insertLatestPackage _.extend {_id: id}, fields
+
+        updateSyncState fields.lastUpdated.valueOf()
 
       changed: (id, fields) ->
         # Will possibly not update anything, if the change is for an older package.
         LatestPackages.update id, fieldsToModifier fields
+
+        updateSyncState fields.lastUpdated.valueOf() if 'lastUpdated' of fields
 
       removed: (id) ->
         oldPackage = LatestPackages.findOne id
@@ -176,28 +231,69 @@ Meteor.startup ->
         Versions.find(packageName: oldPackage.packageName).forEach (document, index, cursor) ->
           insertLatestPackage document
 
-    initializing = false
+  lastUpdatedNewer = ->
+    # We do not do anything, versions observe will handle that.
+    # But we have to start the observe the first time if it is not yet running.
+    startObserve() unless observeHandle
 
-    console.log "Latest packages observe initialized"
+  lastUpdatedOlder = ->
+    # We have to restart the versions observe.
+    startObserve()
 
-    connection = DDP.connect 'packages.meteor.com'
+  updateLastUpdated = (newLastUpdated) ->
+    if not currentLastUpdated
+      currentLastUpdated = newLastUpdated
+      if currentLastUpdated
+        lastUpdatedNewer()
+      else
+        # Not currentLastUpdated nor newLastUpdated were true, we have not
+        # yet started the observe at all. Let's start it now.
+        startObserve()
+    else if not newLastUpdated
+      currentLastUpdated = null
+      lastUpdatedOlder() if currentLastUpdated
+    else if currentLastUpdated > newLastUpdated
+      currentLastUpdated = newLastUpdated
+      lastUpdatedOlder()
+    else if currentLastUpdated < newLastUpdated
+      currentLastUpdated = newLastUpdated
+      lastUpdatedNewer()
 
-    Defaults = new Mongo.Collection 'defaults', connection
-    Changes = new Mongo.Collection 'changes', connection
+  SyncState.find(LAST_UPDATED_ID).observe
+    added: (document) ->
+      updateLastUpdated document.lastUpdated?.valueOf() or null
 
-    connection.subscribe 'defaults', ->
-      try
-        SyncToken.insert
-          _id: 'syncToken'
-          syncToken: Defaults.findOne().syncToken
-      catch error
-        throw error unless /E11000 duplicate key error index:.*SyncToken\.\$_id/.test error.err
+    changed: (document, oldDocument) ->
+      updateLastUpdated document.lastUpdated?.valueOf() or null
 
-      connection.subscribe 'changes', ->
-        Changes.find().observe
-          added: (document) ->
-            sync connection
-          changed: (document, oldDocument) ->
-            sync connection
+    removed: (oldDocument) ->
+      updateLastUpdated null
 
+  console.log "Latest packages observe initialized"
+
+subscribeToPackages = ->
+  connection = DDP.connect 'packages.meteor.com'
+
+  Defaults = new Mongo.Collection 'defaults', connection
+  Changes = new Mongo.Collection 'changes', connection
+
+  connection.subscribe 'defaults', ->
+    try
+      SyncState.insert
+        _id: SYNC_TOKEN_ID
+        syncToken: Defaults.findOne().syncToken
+    catch error
+      throw error unless /E11000 duplicate key error index:.*SyncState\.\$_id/.test error.err
+
+    connection.subscribe 'changes', ->
+      Changes.find().observe
+        added: (document) ->
+          sync connection
+        changed: (document, oldDocument) ->
+          sync connection
+
+Meteor.startup ->
+  new Fiber ->
+    latestPackagesObserve()
+    subscribeToPackages()
   .run()
