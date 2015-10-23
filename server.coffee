@@ -7,11 +7,23 @@ MeteorPackages.Versions._ensureIndex
   packageName: 1
 MeteorPackages.Versions._ensureIndex
   'dependencies.packageName': 1
+MeteorPackages.Versions._ensureIndex
+  published: 1
+MeteorPackages.Versions._ensureIndex
+  lastUpdated: 1
+MeteorPackages.Versions._ensureIndex
+  'publishedBy.username': 1
 
 MeteorPackages.LatestPackages._ensureIndex
   packageName: 1
 MeteorPackages.LatestPackages._ensureIndex
   'dependencies.packageName': 1
+MeteorPackages.LatestPackages._ensureIndex
+  published: 1
+MeteorPackages.LatestPackages._ensureIndex
+  lastUpdated: 1
+MeteorPackages.LatestPackages._ensureIndex
+  'publishedBy.username': 1
 
 # Version documents provided from Meteor API can contain dots in object keys which
 # is not allowed by MongoDB, so we transform document to a version without them.
