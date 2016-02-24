@@ -179,7 +179,7 @@ MeteorPackages.latestPackagesObserve = ->
       _id: @LAST_UPDATED_ID
       lastUpdated: null
   catch error
-    throw error unless /E11000 duplicate key error index:.*SyncState\.\$_id/.test error.err
+    throw error unless /E11000 duplicate key error.*(index.*SyncState|SyncState.*index).*_id/.test(error.err or error.errmsg)
 
   timeoutHandle = null
   newestLastUpdated = null
@@ -299,7 +299,7 @@ MeteorPackages.subscribeToPackages = ->
         _id: @SYNC_TOKEN_ID
         syncToken: Defaults.findOne().syncToken
     catch error
-      throw error unless /E11000 duplicate key error index:.*SyncState\.\$_id/.test error.err
+      throw error unless /E11000 duplicate key error.*(index.*SyncState|SyncState.*index).*_id/.test(error.err or error.errmsg)
 
     connection.subscribe 'changes', =>
       Changes.find({}).observe
