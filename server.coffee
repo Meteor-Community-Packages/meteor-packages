@@ -49,6 +49,13 @@ MeteorPackages.sync = (connection) ->
       @Builds.remove {}
       @ReleaseTracks.remove {}
       @ReleaseVersions.remove {}
+      @LatestPackages.remove {}
+
+      @SyncState.update
+        _id: @LAST_UPDATED_ID
+      ,
+        $set:
+          lastUpdated: null
 
     newPackages = 0
     updatedPackages = 0
