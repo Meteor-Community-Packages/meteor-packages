@@ -1,7 +1,7 @@
 Package.describe({
   name: 'peerlibrary:meteor-packages',
   summary: "Client for Meteor Package Server API",
-  version: '0.2.1',
+  version: '0.2.2',
   git: 'https://github.com/peerlibrary/meteor-packages.git'
 });
 
