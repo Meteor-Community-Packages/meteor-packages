@@ -38,6 +38,9 @@ MeteorPackages.transformVersionDocument = (document) ->
 MeteorPackages.sync = (connection) ->
   loop
     syncToken = @SyncState.findOne(@SYNC_TOKEN_ID).syncToken
+
+    console.log "Running packages sync for:", syncToken
+
     result = connection.call 'syncNewPackageData', syncToken
 
     if result.resetData
@@ -288,6 +291,8 @@ MeteorPackages.latestPackagesObserve = ->
   console.log "Latest packages observe initialized"
 
 MeteorPackages.subscribeToPackages = ->
+  console.log "Starting all packages subscription"
+
   connection = DDP.connect 'packages.meteor.com'
 
   Defaults = new Mongo.Collection 'defaults', connection
@@ -307,6 +312,8 @@ MeteorPackages.subscribeToPackages = ->
           @sync connection
         changed: (document, oldDocument) =>
           @sync connection
+
+    console.log "All packages subscription initialized"
 
 MeteorPackages.startSyncing = ->
   new Fiber =>
