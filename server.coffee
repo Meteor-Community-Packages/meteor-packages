@@ -183,13 +183,12 @@ MeteorPackages.insertLatestPackage = (document) ->
 MeteorPackages.latestPackagesObserve = ->
   console.log "Starting latest packages observe"
 
-  try
-    # We try to create the initial document.
-    @SyncState.insert
-      _id: @LAST_UPDATED_ID
-      lastUpdated: null
-  catch error
-    throw error unless /E11000 duplicate key error.*(index.*SyncState|SyncState.*index).*_id/.test(error.err or error.errmsg)
+  # We try to create the initial document.
+  @SyncState.upsert
+    _id: @LAST_UPDATED_ID
+    lastUpdated: null
+  ,
+    {}
 
   timeoutHandle = null
   newestLastUpdated = null
@@ -306,12 +305,11 @@ MeteorPackages.subscribeToPackages = ->
   Changes = new Mongo.Collection 'changes', connection
 
   connection.subscribe 'defaults', =>
-    try
-      @SyncState.insert
-        _id: @SYNC_TOKEN_ID
+    @SyncState.upsert
+      _id: @SYNC_TOKEN_ID
+    ,
+      $setOnInsert:
         syncToken: Defaults.findOne().syncToken
-    catch error
-      throw error unless /E11000 duplicate key error.*(index.*SyncState|SyncState.*index).*_id/.test(error.err or error.errmsg)
 
     connection.subscribe 'changes', =>
       Changes.find({}).observe
