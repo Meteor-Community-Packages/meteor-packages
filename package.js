@@ -1,34 +1,18 @@
+/* global Package Npm */
 Package.describe({
-  name: 'peerlibrary:meteor-packages',
-  summary: "Client for Meteor Package Server API",
-  version: '0.2.3',
-  git: 'https://github.com/peerlibrary/meteor-packages.git'
+  name: 'communitypackages:package-server-sync',
+  summary: 'Client for Meteor Package Server API',
+  version: '1.0.0',
+  git: 'https://github.com/communitypackages/package-server-sync.git',
+});
+
+Npm.depends({
+  assert: '1.4.1',
 });
 
 Package.onUse(function (api) {
-  api.versionsFrom('METEOR@1.0.3.1');
-
-  // Core dependencies.
-  api.use([
-    'coffeescript',
-    'mongo',
-    'ddp',
-    'underscore',
-    'package-version-parser'
-  ]);
-
-  // 3rd party dependencies.
-  api.use([
-    'peerlibrary:assert@0.2.5'
-  ]);
-
-  api.export('MeteorPackages');
-
-  api.addFiles([
-    'lib.coffee'
-  ]);
-
-  api.addFiles([
-    'server.coffee'
-  ], 'server');
+  api.versionsFrom('1.6');
+  api.use(['ecmascript', 'mongo', 'ddp', 'underscore', 'package-version-parser']);
+  api.mainModule('client.js', 'client');
+  api.mainModule('server.js', 'server');
 });
