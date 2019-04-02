@@ -1,29 +1,36 @@
-Meteor Packages
-===============
+# Meteor Package Server Sync
 
-Package which provides a client for [Meteor Package Server API](https://github.com/meteor/meteor/wiki/Meteor-Package-Server-API).
+A client for [Meteor Package Server API](https://github.com/meteor/meteor/wiki/Meteor-Package-Server-API).
 
-It creates and syncs all data about packages to local MongoDB collections and keeps them in sync.
+Creates and syncs all data about packages to local MongoDB collections and keeps them in sync.
 
-Adding this package to your Meteor application adds `MeteorPackages` into the scope.
+- [Meteor Package Server Sync](#meteor-package-server-sync)
+  - [Code Quality](#code-quality)
+  - [Installation](#installation)
+  - [Usage](#usage)
 
-Both client and server side.
+## Code Quality
 
-Installation
-------------
+[![JavaScript Style Guide](https://img.shields.io/badge/code_style-standard-brightgreen.svg)](https://standardjs.com)
 
+This project has been setup with eslint, prettier and editorconfig configurations to ensure clean, consistent, error free code.
+
+## Installation
+
+```sh
+meteor add communitypackages:package-server-sync
 ```
-meteor add peerlibrary:meteor-packages
-```
 
-Usage
------
+## Usage
 
 On the server-side, you initialize it like this:
 
 ```javascript
-Meteor.startup(function () {
-  MeteorPackages.startSyncing();
+import { Meteor } from "meteor/meteor";
+import { PackageServer } from "meteor/communitypackages:package-server-sync";
+
+Meteor.startup(function() {
+  PackageServer.startSyncing();
 });
 ```
 
@@ -31,12 +38,12 @@ Initial syncing might take quite some time.
 
 Then you can access collections:
 
- * `MeteorPackages.Packages`
- * `MeteorPackages.Versions`
- * `MeteorPackages.Builds`
- * `MeteorPackages.ReleaseTracks`
- * `MeteorPackages.ReleaseVersions`
- * `MeteorPackages.LatestPackages`
+- `PackageServer.Packages`
+- `PackageServer.Versions`
+- `PackageServer.Builds`
+- `PackageServer.ReleaseTracks`
+- `PackageServer.ReleaseVersions`
+- `PackageServer.LatestPackages`
 
 `LatestPackages` collection is the same as `Versions`, only that it contains only the latest versions of packages.
 
