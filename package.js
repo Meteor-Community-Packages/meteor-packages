@@ -1,9 +1,9 @@
 /* global Package Npm */
 Package.describe({
-  name: 'communitypackages:package-server-sync',
+  name: 'peerlibrary:meteor-packages',
   summary: 'Client for Meteor Package Server API',
   version: '1.0.0',
-  git: 'https://github.com/communitypackages/package-server-sync.git',
+  git: 'https://github.com/communitypackages/meteor-packages.git',
 });
 
 Npm.depends({
