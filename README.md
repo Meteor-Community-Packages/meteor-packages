@@ -18,7 +18,7 @@ This project has been setup with eslint, prettier and editorconfig configuration
 ## Installation
 
 ```sh
-meteor add communitypackages:package-server-sync
+meteor add peerlibrary:meteor-packages
 ```
 
 ## Usage
@@ -27,7 +27,7 @@ On the server-side, you initialize it like this:
 
 ```javascript
 import { Meteor } from "meteor/meteor";
-import { PackageServer } from "meteor/communitypackages:package-server-sync";
+import { PackageServer } from "meteor/peerlibrary:meteor-packages";
 
 Meteor.startup(function() {
   PackageServer.startSyncing();
