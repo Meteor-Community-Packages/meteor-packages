@@ -295,7 +295,7 @@ PackageServer.latestPackagesObserve = function () {
       _id: this.LAST_UPDATED_ID,
     },
     {
-      $set: {
+      $setOnInsert: {
         lastUpdated: null,
       },
     }
@@ -321,7 +321,7 @@ PackageServer.latestPackagesObserve = function () {
       const lastUpdated = newestLastUpdated;
       newestLastUpdated = null;
 
-      return this.SyncState.update(
+      this.SyncState.update(
         { _id: this.LAST_UPDATED_ID },
         {
           $set: {
@@ -333,30 +333,26 @@ PackageServer.latestPackagesObserve = function () {
   };
 
   let observeHandle = null;
-  let currentLastUpdated = null;
+  let { lastUpdated: currentLastUpdated } = this.SyncState.findOne(this.LAST_UPDATED_ID);
 
   const startObserve = () => {
-    let query;
+    let query = {};
     if (observeHandle != null) {
       observeHandle.stop();
     }
     observeHandle = null;
 
     if (currentLastUpdated) {
-      query = {
-        lastUpdated: {
-          $gte: new Date(currentLastUpdated),
-        },
+      query.lasUpdated = {
+        $gte: new Date(currentLastUpdated),
       };
-    } else {
-      query = {};
     }
 
     return (observeHandle = this.Versions.find(query).observeChanges({
       added: (id, fields) => {
         this.insertLatestPackage(Object.assign({ _id: id }, fields));
 
-        return updateSyncState(fields.lastUpdated.valueOf());
+        updateSyncState(fields.lastUpdated.valueOf());
       },
 
       changed: (id, fields) => {
@@ -364,7 +360,7 @@ PackageServer.latestPackagesObserve = function () {
         this.LatestPackages.update(id, this.fieldsToModifier(fields));
 
         if ('lastUpdated' in fields) {
-          return updateSyncState(fields.lastUpdated.valueOf());
+          updateSyncState(fields.lastUpdated.valueOf());
         }
       },
 
@@ -380,8 +376,8 @@ PackageServer.latestPackagesObserve = function () {
         this.LatestPackages.remove(id);
 
         // We find the new latest package.
-        return this.Versions.find({ packageName: oldPackage.packageName }).forEach(document => {
-          return this.insertLatestPackage(document);
+        this.Versions.find({ packageName: oldPackage.packageName }).forEach(document => {
+          this.insertLatestPackage(document);
         });
       },
     }));
