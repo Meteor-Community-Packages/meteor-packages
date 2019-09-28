@@ -1,7 +1,10 @@
 import { Meteor } from 'meteor/meteor';
 import { Mongo } from 'meteor/mongo';
 import { DDP } from 'meteor/ddp';
+import { Random } from 'meteor/random';
 import { PackageVersion } from 'meteor/package-version-parser';
+import { HTTP } from 'meteor/http';
+
 import Fiber from 'fibers';
 import assert from 'assert';
 
@@ -9,7 +12,18 @@ import { PackageServer } from './package-server';
 
 PackageServer.SYNC_TOKEN_ID = 'syncToken';
 PackageServer.LAST_UPDATED_ID = 'lastUpdated';
+PackageServer.STATS_SYNC_ID = 'statsSync';
+PackageServer.FULL_SYNC_ID = 'fullSync';
+PackageServer.URL = 'https://packages.meteor.com';
 
+PackageServer.connection = null;
+
+PackageServer.Packages._ensureIndex({
+  name: 1,
+});
+PackageServer.Stats._ensureIndex({
+  name: 1,
+});
 PackageServer.Versions._ensureIndex({
   packageName: 1,
 });
@@ -59,7 +73,9 @@ PackageServer.transformVersionDocument = function (document) {
   return document;
 };
 
-PackageServer.sync = function (connection) {
+PackageServer.syncPackages = function () {
+  const connection = this.getServerConnection();
+
   while (true) {
     var error, insertedId, numberAffected;
     const { syncToken } = this.SyncState.findOne(this.SYNC_TOKEN_ID);
@@ -75,7 +91,8 @@ PackageServer.sync = function (connection) {
       this.ReleaseTracks.remove({});
       this.ReleaseVersions.remove({});
       this.LatestPackages.remove({});
-
+      this.Stats.remove({});
+      this.SyncState.remove({ _id: this.STATS_SYNC_ID });
       this.SyncState.update(
         { _id: this.LAST_UPDATED_ID },
         {
@@ -93,7 +110,7 @@ PackageServer.sync = function (connection) {
 
     packageRecords.forEach(packageRecord => {
       try {
-        ({ numberAffected, insertedId } = this.Packages.upsert(packageRecord._id, packageRecord));
+        ({ numberAffected, insertedId } = this.Packages.upsert(packageRecord._id, { $set: packageRecord }));
         if (insertedId && insertedId === packageRecord._id) {
           newPackages++;
           updatedPackages += numberAffected - 1;
@@ -229,7 +246,78 @@ PackageServer.sync = function (connection) {
     );
 
     if (result.upToDate) {
+      if (!this.isSyncCompleted()) {
+        this.setSyncCompleted();
+        this.syncStats();
+      }
       return;
+    }
+  }
+};
+
+PackageServer.isSyncCompleted = function () {
+  return this.SyncState.findOne(this.FULL_SYNC_ID);
+};
+
+PackageServer.setSyncCompleted = function () {
+  this.SyncState.upsert({ _id: this.FULL_SYNC_ID }, { complete: true });
+};
+
+PackageServer.syncStats = async function () {
+  if (this.SyncState.findOne(this.FULL_SYNC_ID)) {
+    const { current, latest } = this.SyncState.findOne({ _id: this.STATS_SYNC_ID });
+    latest.setDate(latest.getDate() - 1);
+    const statsRaw = this.Stats.rawCollection();
+    const packagesRaw = this.Packages.rawCollection();
+
+    // We update current using it's setDate method.
+    // eslint complains for lack of explicit update so we disable it for the next line
+    while (!(current > latest)) { // eslint-disable-line
+      console.log('Syncing Stats For ', current.toLocaleString());
+      let statsBatch = statsRaw.initializeOrderedBulkOp();
+      let packagesBatch = packagesRaw.initializeOrderedBulkOp();
+      let stats = [];
+      try {
+        const dateString = `${current.getFullYear()}-${(current.getMonth() + 1).toString().padStart(2, 0)}-${current.getDate().toString().padStart(2, 0)}`;
+        const statsUrl = `${this.URL}/stats/v1/${dateString}`;
+        const response = HTTP.get(statsUrl);
+        stats = response.content.split('\n');
+        stats.pop(); // remove empty line
+
+        // stats is an array of strings because someone at MDG forgot JSON exists.
+        // Therefor we need to loop and parse each string
+        stats.forEach(statDoc => {
+          let doc = JSON.parse(statDoc);
+          const { name, totalAdds, directAdds } = doc;
+
+          doc._id = Random.id();
+          doc.date = current;
+          statsBatch.insert(doc);
+          packagesBatch.find({ name }).update({ $inc: { totalAdds, directAdds } });
+        });
+      } catch (error) {
+        /*
+          We just ignore the error because it's either JSON.parse threw on a malformed string, or
+          a 404 from the package server not having stats for a day? I guess.
+        */
+      }
+      if (stats.length) {
+        try {
+          await statsBatch.execute();
+          await packagesBatch.execute();
+        } catch (error) {
+          console.log(error);
+        }
+      }
+
+      // update the last date of packages stats that we have processed
+      this.SyncState.update(
+        { _id: this.STATS_SYNC_ID },
+        { $set: { current } },
+      );
+
+      // update the current date to the next day so we eventually break out
+      current.setDate(current.getDate() + 1);
     }
   }
 };
@@ -437,15 +525,22 @@ PackageServer.latestPackagesObserve = function () {
   return console.log('Latest packages observe initialized');
 };
 
+PackageServer.getServerConnection = function () {
+  if (!PackageServer.connection) {
+    PackageServer.connection = DDP.connect(this.URL);
+  }
+  return PackageServer.connection;
+};
+
 PackageServer.subscribeToPackages = function () {
   console.log('Starting all packages subscription');
 
-  const connection = DDP.connect('https://packages.meteor.com');
+  const connection = this.getServerConnection();
 
   const Defaults = new Mongo.Collection('defaults', connection);
   const Changes = new Mongo.Collection('changes', connection);
 
-  return connection.subscribe('defaults', () => {
+  connection.subscribe('defaults', () => {
     this.SyncState.upsert(
       { _id: this.SYNC_TOKEN_ID },
       {
@@ -458,22 +553,62 @@ PackageServer.subscribeToPackages = function () {
     connection.subscribe('changes', () => {
       return Changes.find({}).observe({
         added: document => {
-          return this.sync(connection);
+          return this.syncPackages();
         },
         changed: (document, oldDocument) => {
-          return this.sync(connection);
+          return this.syncPackages();
         },
       });
     });
 
-    return console.log('All packages subscription initialized');
+    console.log('All packages subscription initialized');
+  });
+};
+
+PackageServer.subscribeToStats = function () {
+  console.log('Starting Stats Subscription');
+  const connection = this.getServerConnection();
+
+  const Stats = new Mongo.Collection('stats', connection);
+
+  connection.subscribe('stats', () => {
+    Stats.find({}).observe({
+      added: document => {
+        const { earliest, latest } = document;
+        this.SyncState.upsert(
+          { _id: this.STATS_SYNC_ID },
+          {
+            $set: {
+              latest: new Date(latest.replace('-', '/')),
+            },
+            $setOnInsert: {
+              current: new Date(earliest.replace('-', '/')),
+            },
+          },
+        );
+
+        if (this.isSyncCompleted()) {
+          this.syncStats();
+        }
+      },
+
+      changed: document => {
+        const { latest } = document;
+        this.SyncState.update(
+          { _id: this.STATS_SYNC_ID },
+          { $set: { latest: new Date(latest.replace('-', '/')) } }
+        );
+        this.syncStats();
+      },
+    });
   });
 };
 
 PackageServer.startSyncing = function () {
-  return new Fiber(() => {
+  new Fiber(() => {
+    this.subscribeToPackages();
     this.latestPackagesObserve();
-    return this.subscribeToPackages();
+    this.subscribeToStats();
   }).run();
 };
 

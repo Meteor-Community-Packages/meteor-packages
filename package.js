@@ -12,7 +12,7 @@ Npm.depends({
 
 Package.onUse(function (api) {
   api.versionsFrom('1.6');
-  api.use(['ecmascript', 'mongo', 'ddp', 'underscore', 'package-version-parser']);
+  api.use(['ecmascript', 'http', 'random', 'mongo', 'ddp', 'underscore', 'package-version-parser']);
   api.mainModule('client.js', 'client');
   api.mainModule('server.js', 'server');
 });
