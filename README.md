@@ -44,9 +44,14 @@ Then you can access collections:
 - `PackageServer.ReleaseTracks`
 - `PackageServer.ReleaseVersions`
 - `PackageServer.LatestPackages`
+- `PackageServer.stats`
 
-`LatestPackages` collection is the same as `Versions`, only that it contains only the latest versions of packages.
+> `LatestPackages` collection is the same as `Versions`, only that it contains only the latest versions of packages.
 
 Schema of documents is the same as [described in the documentation](https://github.com/meteor/meteor/wiki/Meteor-Package-Server-API)
-with one exception: in `Versions` collection, `dependencies` field is represented as an array of objects where package
+with a couple exceptions.
+
+1. `Versions` collection's `dependencies` field is represented as an array of objects where package
 name is stored as `packageName` key. This is to support package names with `.` in the name without any problems.
+
+2. `Stats` collection adds the date field to the document for ease of querying chronologically.
