@@ -54,4 +54,6 @@ with a couple exceptions.
 1. `Versions` collection's `dependencies` field is represented as an array of objects where package
 name is stored as `packageName` key. This is to support package names with `.` in the name without any problems.
 
-2. `Stats` collection adds the date field to the document for ease of querying chronologically.
+2. `Packages` collection will contain 2 additional fields, `directAdds`, and `totalAdds` which are the direct and total install counts for the corresponding package.
+
+3. `Stats` collection adds the date field to the document for ease of querying chronologically.
