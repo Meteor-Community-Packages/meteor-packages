@@ -264,15 +264,15 @@ PackageServer.setSyncCompleted = function () {
 };
 
 PackageServer.syncStats = async function () {
-  if (this.SyncState.findOne(this.FULL_SYNC_ID)) {
-    const { current, latest } = this.SyncState.findOne({ _id: this.STATS_SYNC_ID });
-    latest.setDate(latest.getDate() - 1);
+  const { current, latest } = this.SyncState.findOne({ _id: this.STATS_SYNC_ID });
+
+  if (current < latest) {
     const statsRaw = this.Stats.rawCollection();
     const packagesRaw = this.Packages.rawCollection();
 
     // We update current using it's setDate method.
     // eslint complains for lack of explicit update so we disable it for the next line
-    while (!(current > latest)) { // eslint-disable-line
+    while (current <= latest) { // eslint-disable-line
       console.log('Syncing Stats For ', current.toLocaleString());
       let statsBatch = statsRaw.initializeOrderedBulkOp();
       let packagesBatch = packagesRaw.initializeOrderedBulkOp();
