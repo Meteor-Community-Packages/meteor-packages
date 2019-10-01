@@ -30,7 +30,15 @@ import { Meteor } from "meteor/meteor";
 import { PackageServer } from "meteor/peerlibrary:meteor-packages";
 
 Meteor.startup(function() {
-  PackageServer.startSyncing();
+  PackageServer.startSyncing({
+    //options - the following are the defaults if not passed
+    logging: false, // When true, informational log messages will be printed to the console
+    sync: {
+      builds: true, // Should information about package builds be stored
+      releases: true, // Should information about Meteor releases and release tracks be stored
+      stats: true, // Should package stats be fetched and stored
+    }
+  });
 });
 ```
 

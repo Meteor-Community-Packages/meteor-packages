@@ -10,6 +10,9 @@ import assert from 'assert';
 
 import { PackageServer } from './package-server';
 
+let loggingEnabled;
+let syncOptions;
+
 PackageServer.SYNC_TOKEN_ID = 'syncToken';
 PackageServer.LAST_UPDATED_ID = 'lastUpdated';
 PackageServer.STATS_SYNC_ID = 'statsSync';
@@ -80,7 +83,7 @@ PackageServer.syncPackages = function () {
     var error, insertedId, numberAffected;
     const { syncToken } = this.SyncState.findOne(this.SYNC_TOKEN_ID);
 
-    console.log('Running packages sync for:', syncToken);
+    loggingEnabled && console.log('Running packages sync for:', syncToken);
 
     const result = connection.call('syncNewPackageData', syncToken);
 
@@ -150,7 +153,7 @@ PackageServer.syncPackages = function () {
 
     const builds = (result.collections && result.collections.builds) || [];
 
-    builds.forEach(build => {
+    syncOptions.builds && builds.forEach(build => {
       try {
         ({ numberAffected, insertedId } = this.Builds.upsert(build._id, build));
         if (insertedId) {
@@ -171,7 +174,7 @@ PackageServer.syncPackages = function () {
 
     const releaseTracks = (result.collections && result.collections.releaseTracks) || [];
 
-    releaseTracks.forEach(releaseTrack => {
+    syncOptions.releases && releaseTracks.forEach(releaseTrack => {
       try {
         ({ numberAffected, insertedId } = this.ReleaseTracks.upsert(releaseTrack._id, releaseTrack));
         if (insertedId) {
@@ -192,7 +195,7 @@ PackageServer.syncPackages = function () {
 
     const releaseVersions = (result.collections && result.collections.releaseVersions) || [];
 
-    releaseVersions.forEach(releaseVersion => {
+    syncOptions.releases && releaseVersions.forEach(releaseVersion => {
       try {
         ({ numberAffected, insertedId } = this.ReleaseVersions.upsert(releaseVersion._id, releaseVersion));
         if (insertedId) {
@@ -208,30 +211,32 @@ PackageServer.syncPackages = function () {
       }
     });
 
-    if (newPackages || updatedPackages) {
-      console.log(
-        `PackageServer.Packages - all: ${this.Packages.find().count()}, new: ${newPackages}, updated: ${updatedPackages}`
-      );
-    }
-    if (newVersions || updatedVersions) {
-      console.log(
-        `PackageServer.Versions - all: ${this.Versions.find().count()}, new: ${newVersions}, updated: ${updatedVersions}`
-      );
-    }
-    if (newBuilds || updatedBuilds) {
-      console.log(
-        `PackageServer.Builds - all: ${this.Builds.find().count()}, new: ${newBuilds}, updated: ${updatedBuilds}`
-      );
-    }
-    if (newReleaseTracks || updatedReleaseTracks) {
-      console.log(
-        `PackageServer.ReleaseTracks - all: ${this.ReleaseTracks.find().count()}, new: ${newReleaseTracks}, updated: ${updatedReleaseTracks}`
-      );
-    }
-    if (newReleaseVersions || updatedReleaseVersions) {
-      console.log(
-        `PackageServer.ReleaseVersions - all: ${this.ReleaseVersions.find().count()}, new: ${newReleaseVersions}, updated: ${updatedReleaseVersions}`
-      );
+    if (loggingEnabled) {
+      if (newPackages || updatedPackages) {
+        console.log(
+          `PackageServer.Packages - all: ${this.Packages.find().count()}, new: ${newPackages}, updated: ${updatedPackages}`
+        );
+      }
+      if (newVersions || updatedVersions) {
+        console.log(
+          `PackageServer.Versions - all: ${this.Versions.find().count()}, new: ${newVersions}, updated: ${updatedVersions}`
+        );
+      }
+      if (newBuilds || updatedBuilds) {
+        console.log(
+          `PackageServer.Builds - all: ${this.Builds.find().count()}, new: ${newBuilds}, updated: ${updatedBuilds}`
+        );
+      }
+      if (newReleaseTracks || updatedReleaseTracks) {
+        console.log(
+          `PackageServer.ReleaseTracks - all: ${this.ReleaseTracks.find().count()}, new: ${newReleaseTracks}, updated: ${updatedReleaseTracks}`
+        );
+      }
+      if (newReleaseVersions || updatedReleaseVersions) {
+        console.log(
+          `PackageServer.ReleaseVersions - all: ${this.ReleaseVersions.find().count()}, new: ${newReleaseVersions}, updated: ${updatedReleaseVersions}`
+        );
+      }
     }
 
     // We store the new token only after all data in the result has been processed. This assures
@@ -297,9 +302,9 @@ PackageServer.syncStats = async function () {
         });
       } catch (error) {
         /*
-          We just ignore the error because it's either JSON.parse threw on a malformed string, or
-          a 404 from the package server not having stats for a day? I guess.
-        */
+            We just ignore the error because it's either JSON.parse threw on a malformed string, or
+            a 404 from the package server not having stats for a day? I guess.
+          */
       }
       if (stats.length) {
         try {
@@ -375,7 +380,7 @@ PackageServer.insertLatestPackage = function (document) {
 };
 
 PackageServer.latestPackagesObserve = function () {
-  console.log('Starting latest packages observe');
+  loggingEnabled && console.log('Starting latest packages observe');
 
   // We try to create the initial document.
   this.SyncState.upsert(
@@ -522,7 +527,7 @@ PackageServer.latestPackagesObserve = function () {
     },
   });
 
-  return console.log('Latest packages observe initialized');
+  loggingEnabled && console.log('Latest packages observe initialized');
 };
 
 PackageServer.getServerConnection = function () {
@@ -533,7 +538,7 @@ PackageServer.getServerConnection = function () {
 };
 
 PackageServer.subscribeToPackages = function () {
-  console.log('Starting all packages subscription');
+  loggingEnabled && console.log('Starting all packages subscription');
 
   const connection = this.getServerConnection();
 
@@ -561,20 +566,21 @@ PackageServer.subscribeToPackages = function () {
       });
     });
 
-    console.log('All packages subscription initialized');
+    loggingEnabled && console.log('All packages subscription initialized');
   });
 };
 
 PackageServer.subscribeToStats = function () {
-  console.log('Starting Stats Subscription');
-  const connection = this.getServerConnection();
+  loggingEnabled && console.log('Starting Stats Subscription');
 
+  const connection = this.getServerConnection();
   const Stats = new Mongo.Collection('stats', connection);
 
   connection.subscribe('stats', () => {
     Stats.find({}).observe({
       added: document => {
         const { earliest, latest } = document;
+
         this.SyncState.upsert(
           { _id: this.STATS_SYNC_ID },
           {
@@ -604,12 +610,14 @@ PackageServer.subscribeToStats = function () {
   });
 };
 
-PackageServer.startSyncing = function () {
+PackageServer.startSyncing = function ({ logging = false, sync: { builds = true, releases = true, stats = true } = {} } = {}) {
   loggingEnabled = logging;
+  syncOptions = { builds, releases };
+
   new Fiber(async () => {
     this.subscribeToPackages();
     this.latestPackagesObserve();
-    await this.subscribeToStats();
+    stats && await this.subscribeToStats();
   }).run();
 };
 
