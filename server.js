@@ -605,10 +605,11 @@ PackageServer.subscribeToStats = function () {
 };
 
 PackageServer.startSyncing = function () {
-  new Fiber(() => {
+  loggingEnabled = logging;
+  new Fiber(async () => {
     this.subscribeToPackages();
     this.latestPackagesObserve();
-    this.subscribeToStats();
+    await this.subscribeToStats();
   }).run();
 };
 
