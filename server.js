@@ -45,7 +45,7 @@ PackageServer.Versions._ensureIndex({
 
 PackageServer.LatestPackages._ensureIndex({
   packageName: 1,
-});
+}, { unique: true });
 PackageServer.LatestPackages._ensureIndex({
   'dependencies.packageName': 1,
 });
@@ -58,6 +58,11 @@ PackageServer.LatestPackages._ensureIndex({
 PackageServer.LatestPackages._ensureIndex({
   'publishedBy.username': 1,
 });
+
+const statsRaw = PackageServer.Stats.rawCollection();
+const packagesRaw = PackageServer.Packages.rawCollection();
+const latestPackagesRaw = PackageServer.LatestPackages.rawCollection();
+const versionsRaw = PackageServer.Versions.rawCollection();
 
 // Version documents provided from Meteor API can contain dots in object keys which
 // is not allowed by MongoDB, so we transform document to a version without them.
@@ -253,6 +258,7 @@ PackageServer.syncPackages = function () {
     if (result.upToDate) {
       if (!this.isSyncCompleted()) {
         this.setSyncCompleted();
+        this.deriveLatestPackagesFromVersions();
         this.syncStats();
       }
       return;
@@ -260,8 +266,9 @@ PackageServer.syncPackages = function () {
   }
 };
 
+let syncCompleted = false;
 PackageServer.isSyncCompleted = function () {
-  return this.SyncState.findOne(this.FULL_SYNC_ID);
+  return syncCompleted || this.SyncState.findOne(this.FULL_SYNC_ID);
 };
 
 PackageServer.setSyncCompleted = function () {
@@ -272,9 +279,6 @@ PackageServer.syncStats = async function () {
   const { current, latest } = this.SyncState.findOne({ _id: this.STATS_SYNC_ID });
 
   if (current < latest) {
-    const statsRaw = this.Stats.rawCollection();
-    const packagesRaw = this.Packages.rawCollection();
-
     // We update current using it's setDate method.
     // eslint complains for lack of explicit update so we disable it for the next line
     while (current <= latest) { // eslint-disable-line
@@ -348,35 +352,45 @@ PackageServer.fieldsToModifier = function (fields) {
   return modifier;
 };
 
-PackageServer.insertLatestPackage = function (document) {
-  while (true) {
-    const existingDocument = this.LatestPackages.findOne({
-      _id: {
-        $ne: document._id,
+PackageServer.deriveLatestPackagesFromVersions = async function () {
+  const packageNames = await versionsRaw.distinct('packageName');
+  const bulk = latestPackagesRaw.initializeUnorderedBulkOp();
+
+  packageNames.forEach((packageName, index) => {
+    const latestVersion = this.determineLatestPackageVersion(packageName);
+    bulk.insert(latestVersion);
+  });
+
+  await bulk.execute();
+
+  this.SyncState.update(
+    { _id: this.LAST_UPDATED_ID },
+    {
+      $set: {
+        lastUpdated: new Date().valueOf(),
       },
-      packageName: document.packageName,
-    });
-
-    if (existingDocument) {
-      if (PackageVersion.lessThan(existingDocument.version, document.version)) {
-        // We have an older version, remove it.
-        this.LatestPackages.remove(existingDocument._id);
-        continue;
-      } else {
-        // We have a newer version, don't do anything.
-        return;
-      }
-    } else {
-      // We do not have any other version (anymore). Let's continue.
-      break;
     }
-  }
+  );
+};
 
-  // TODO: Slight race condition here. There might be another document inserted between removal and this insertion.
-  const { insertedId } = this.LatestPackages.upsert(document._id, document);
-  if (insertedId) {
-    return assert.strictEqual(insertedId, document._id);
+PackageServer.determineLatestPackageVersion = function (packageName) {
+  let newestPackage;
+  this.Versions.find({ packageName }).forEach(document => {
+    if (!newestPackage || PackageVersion.lessThan(newestPackage.version, document.version)) {
+      newestPackage = document;
+    }
+  });
+  return newestPackage;
+};
+
+PackageServer.replaceLatestPackageIfNewer = function (document) {
+  const { packageName } = document;
+  const existingDocument = this.LatestPackages.findOne({ packageName });
+
+  if (existingDocument && PackageVersion.lessThan(existingDocument.version, document.version)) {
+    this.LatestPackages.remove(existingDocument);
   }
+  this.LatestPackages.insert(document);
 };
 
 PackageServer.latestPackagesObserve = function () {
@@ -394,7 +408,6 @@ PackageServer.latestPackagesObserve = function () {
     }
   );
 
-  let timeoutHandle = null;
   let newestLastUpdated = null;
 
   // Update sync state after 30 seconds of no updates. This assures that if there was a series of observe
@@ -409,44 +422,41 @@ PackageServer.latestPackagesObserve = function () {
       newestLastUpdated = newLastUpdated;
     }
 
-    Meteor.clearTimeout(timeoutHandle);
-    return (timeoutHandle = Meteor.setTimeout(() => {
-      const lastUpdated = newestLastUpdated;
-      newestLastUpdated = null;
+    const lastUpdated = newestLastUpdated;
+    newestLastUpdated = null;
 
       this.SyncState.update(
         { _id: this.LAST_UPDATED_ID },
         {
           $set: {
             lastUpdated,
-          },
-        }
-      );
-    }, 30 * 1000)); // ms
+        },
+      }
+    );
   };
 
   let observeHandle = null;
   let { lastUpdated: currentLastUpdated } = this.SyncState.findOne(this.LAST_UPDATED_ID);
 
   const startObserve = () => {
-    let query = {};
-    if (observeHandle != null) {
-      observeHandle.stop();
+    if (this.isSyncCompleted()) {
+      let query = {};
+      if (observeHandle != null) {
+        observeHandle.stop();
     }
     observeHandle = null;
 
     if (currentLastUpdated) {
       query.lasUpdated = {
         $gte: new Date(currentLastUpdated),
-      };
-    }
+        };
+      }
 
-    return (observeHandle = this.Versions.find(query).observeChanges({
-      added: (id, fields) => {
-        this.insertLatestPackage(Object.assign({ _id: id }, fields));
-
-        updateSyncState(fields.lastUpdated.valueOf());
-      },
+      observeHandle = this.Versions.find(query).observeChanges({
+        added: (id, fields) => {
+          this.replaceLatestPackageIfNewer({ _id: id, ...fields });
+          updateSyncState(fields.lastUpdated.valueOf());
+        },
 
       changed: (id, fields) => {
         // Will possibly not update anything, if the change is for an older package.
@@ -457,73 +467,70 @@ PackageServer.latestPackagesObserve = function () {
         }
       },
 
-      removed: id => {
-        const oldPackage = this.LatestPackages.findOne(id);
+        removed: id => {
+          const oldPackage = this.LatestPackages.findOne(id);
 
-        // Package already removed?
-        if (!oldPackage) {
-          return;
-        }
+          if (oldPackage) {
+            this.LatestPackages.remove(id);
+            const newPackage = this.determineLatestPackageVersion(oldPackage.packageName);
 
-        // We remove it.
-        this.LatestPackages.remove(id);
-
-        // We find the new latest package.
-        this.Versions.find({ packageName: oldPackage.packageName }).forEach(document => {
-          this.insertLatestPackage(document);
-        });
-      },
-    }));
+            if (newPackage) {
+              this.latestPackages.insert(newPackage);
+            }
+          }
+        },
+      });
+    }
   };
 
   const lastUpdatedNewer = () => {
     // We do not do anything, versions observe will handle that.
     // But we have to start the observe the first time if it is not yet running.
     if (!observeHandle) {
-      return startObserve();
+      startObserve();
     }
   };
 
   const lastUpdatedOlder = () => {
     // We have to restart the versions observe.
-    return startObserve();
+    startObserve();
   };
 
   const updateLastUpdated = newLastUpdated => {
     if (!currentLastUpdated) {
       currentLastUpdated = newLastUpdated;
       if (currentLastUpdated) {
-        return lastUpdatedNewer();
+        lastUpdatedNewer();
       } else {
         // Not currentLastUpdated nor newLastUpdated were true, we have not
         // yet started the observe at all. Let's start it now.
-        return startObserve();
+        startObserve();
       }
     } else if (!newLastUpdated) {
       currentLastUpdated = null;
       if (currentLastUpdated) {
-        return lastUpdatedOlder();
+        lastUpdatedOlder();
       }
     } else if (currentLastUpdated > newLastUpdated) {
       currentLastUpdated = newLastUpdated;
-      return lastUpdatedOlder();
+      lastUpdatedOlder();
     } else if (currentLastUpdated < newLastUpdated) {
       currentLastUpdated = newLastUpdated;
-      return lastUpdatedNewer();
+      lastUpdatedNewer();
     }
   };
 
   this.SyncState.find(this.LAST_UPDATED_ID).observe({
     added: document => {
-      return updateLastUpdated((document.lastUpdated && document.lastUpdated.valueOf()) || null);
+      updateLastUpdated((document.lastUpdated && document.lastUpdated.valueOf()) || null);
     },
 
     changed: (document, oldDocument) => {
-      return updateLastUpdated((document.lastUpdated && document.lastUpdated.valueOf()) || null);
+      updateLastUpdated((document.lastUpdated && document.lastUpdated.valueOf()) || null);
     },
 
     removed: oldDocument => {
-      return updateLastUpdated(null);
+      updateLastUpdated(null);
     },
   });
 
@@ -580,7 +587,6 @@ PackageServer.subscribeToStats = function () {
     Stats.find({}).observe({
       added: document => {
         const { earliest, latest } = document;
-
         this.SyncState.upsert(
           { _id: this.STATS_SYNC_ID },
           {
@@ -592,7 +598,6 @@ PackageServer.subscribeToStats = function () {
             },
           },
         );
-
         if (this.isSyncCompleted()) {
           this.syncStats();
         }
