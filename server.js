@@ -6,7 +6,6 @@ import { PackageVersion } from 'meteor/package-version-parser';
 import { HTTP } from 'meteor/http';
 
 import Fiber from 'fibers';
-import assert from 'assert';
 
 import { PackageServer } from './package-server';
 

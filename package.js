@@ -1,13 +1,9 @@
-/* global Package Npm */
+/* global Package */
 Package.describe({
   name: 'peerlibrary:meteor-packages',
   summary: 'Client for Meteor Package Server API',
   version: '1.0.0',
   git: 'https://github.com/Meteor-Community-Packages/meteor-packages.git',
-});
-
-Npm.depends({
-  assert: '1.4.1',
 });
 
 Package.onUse(function (api) {
