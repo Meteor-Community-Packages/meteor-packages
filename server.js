@@ -349,15 +349,20 @@ PackageServer.fieldsToModifier = function (fields) {
 };
 
 PackageServer.deriveLatestPackagesFromVersions = async function () {
-  const packageNames = await versionsRaw.distinct('packageName');
-  const bulk = latestPackagesRaw.initializeUnorderedBulkOp();
+  loggingEnabled && console.log('deriving latest packages');
+  const packageNames = await PackageServer.rawVersions.distinct('packageName');
+  const bulk = PackageServer.rawLatestPackages.initializeUnorderedBulkOp();
 
   packageNames.forEach((packageName, index) => {
     const latestVersion = this.determineLatestPackageVersion(packageName);
-    bulk.insert(latestVersion);
+    bulk.insert(this.transformVersionDocument(latestVersion));
   });
 
-  await bulk.execute();
+  try {
+    await bulk.execute();
+  } catch (error) {
+    console.log(error);
+  }
 
   this.SyncState.update(
     { _id: this.LAST_UPDATED_ID },
