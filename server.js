@@ -406,7 +406,7 @@ PackageServer.latestPackagesObserve = function () {
     },
     {
       $setOnInsert: {
-        lastUpdated: null,
+        lastUpdated: new Date().valueOf(),
       },
     }
   );
