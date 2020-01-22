@@ -620,12 +620,12 @@ PackageServer.subscribeToStats = function () {
 
 PackageServer.startSyncing = function ({ logging = false, sync: { builds = true, releases = true, stats = true } = {} } = {}) {
   loggingEnabled = logging;
-  syncOptions = { builds, releases };
+  syncOptions = { builds, releases, stats };
 
   new Fiber(async () => {
+    stats && this.subscribeToStats();
     this.subscribeToPackages();
     this.latestPackagesObserve();
-    stats && await this.subscribeToStats();
   }).run();
 };
 
