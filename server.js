@@ -44,7 +44,7 @@ PackageServer.Versions._ensureIndex({
 
 PackageServer.LatestPackages._ensureIndex({
   packageName: 1,
-}, { unique: true });
+});
 PackageServer.LatestPackages._ensureIndex({
   'dependencies.packageName': 1,
 });
