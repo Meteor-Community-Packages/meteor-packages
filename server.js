@@ -325,6 +325,7 @@ PackageServer.syncStats = async function () {
       current.setDate(current.getDate() + 1);
     }
   }
+  loggingEnabled && console.log('Full Sync Finished');
 };
 
 PackageServer.fieldsToModifier = function (fields) {
@@ -580,7 +581,7 @@ PackageServer.subscribeToPackages = function () {
 };
 
 PackageServer.subscribeToStats = function () {
-  loggingEnabled && console.log('Starting Stats Subscription');
+  console.log('Starting Stats Subscription');
 
   const connection = this.getServerConnection();
   const Stats = new Mongo.Collection('stats', connection);
