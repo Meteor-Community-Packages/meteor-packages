@@ -275,47 +275,44 @@ PackageServer.setSyncCompleted = function () {
 };
 
 PackageServer.syncStats = async function () {
-  const { current, latest } = this.SyncState.findOne({ _id: this.STATS_SYNC_ID });
+  const defaultDate = new Date();
+  const { current = defaultDate, latest = defaultDate } = this.SyncState.findOne({ _id: this.STATS_SYNC_ID }) || {};
 
   if (current < latest) {
     // We update current using it's setDate method.
     // eslint complains for lack of explicit update so we disable it for the next line
     while (current <= latest) { // eslint-disable-line
-      console.log('Syncing Stats For ', current.toLocaleString());
-      let statsBatch = statsRaw.initializeOrderedBulkOp();
-      let packagesBatch = packagesRaw.initializeOrderedBulkOp();
-      let stats = [];
+      loggingEnabled && console.log('Syncing Stats For ', current.toLocaleString());
+      let statsBatch = PackageServer.rawStats.initializeOrderedBulkOp();
+      let packagesBatch = PackageServer.rawPackages.initializeOrderedBulkOp();
       try {
         const dateString = `${current.getFullYear()}-${(current.getMonth() + 1).toString().padStart(2, 0)}-${current.getDate().toString().padStart(2, 0)}`;
         const statsUrl = `${this.URL}/stats/v1/${dateString}`;
         const response = HTTP.get(statsUrl);
-        stats = response.content.split('\n');
-        stats.pop(); // remove empty line
+        const content = response.content.trim();
+        let stats = content.length ? content.split('\n') : [];
 
         // stats is an array of strings because someone at MDG forgot JSON exists.
         // Therefor we need to loop and parse each string
-        stats.forEach(statDoc => {
-          let doc = JSON.parse(statDoc);
-          const { name, totalAdds, directAdds } = doc;
-
-          doc._id = Random.id();
-          doc.date = current;
-          statsBatch.insert(doc);
-          packagesBatch.find({ name }).update({ $inc: { totalAdds, directAdds } });
-        });
-      } catch (error) {
-        /*
-            We just ignore the error because it's either JSON.parse threw on a malformed string, or
-            a 404 from the package server not having stats for a day? I guess.
-          */
-      }
-      if (stats.length) {
-        try {
+        if (stats.length) {
+          stats.forEach(statDoc => {
+            let doc = JSON.parse(statDoc);
+            const { name, totalAdds, directAdds } = doc;
+            doc._id = Random.id();
+            doc.date = current;
+            statsBatch.insert(doc);
+            packagesBatch.find({ name }).update({ $inc: { totalAdds, directAdds } });
+          });
           await statsBatch.execute();
           await packagesBatch.execute();
-        } catch (error) {
-          console.log(error);
         }
+      } catch (error) {
+        if (!(error.response && error.response.statusCode === 404)) {
+          console.log(Object.keys(error));
+        }
+        /*
+            We just ignore the error if it's a 404 from the package server. Must be due to not having stats for a certain day?
+          */
       }
 
       // update the last date of packages stats that we have processed
@@ -383,6 +380,7 @@ PackageServer.determineLatestPackageVersion = function (packageName) {
 };
 
 PackageServer.replaceLatestPackageIfNewer = function (document) {
+  loggingEnabled && console.log('replacing:', document.packageName);
   const { packageName } = document;
   const existingDocument = this.LatestPackages.findOne({ packageName });
 
