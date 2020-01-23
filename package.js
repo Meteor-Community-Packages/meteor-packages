@@ -1,4 +1,4 @@
-/* global Package Npm */
+/* global Package */
 Package.describe({
   name: 'peerlibrary:meteor-packages',
   summary: 'Client for Meteor Package Server API',
@@ -6,13 +6,9 @@ Package.describe({
   git: 'https://github.com/Meteor-Community-Packages/meteor-packages.git',
 });
 
-Npm.depends({
-  assert: '1.4.1',
-});
-
 Package.onUse(function (api) {
   api.versionsFrom('1.6');
-  api.use(['ecmascript', 'mongo', 'ddp', 'underscore', 'package-version-parser']);
+  api.use(['ecmascript', 'http', 'random', 'mongo', 'ddp', 'underscore', 'package-version-parser']);
   api.mainModule('client.js', 'client');
   api.mainModule('server.js', 'server');
 });
