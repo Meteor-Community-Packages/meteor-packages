@@ -140,7 +140,6 @@ PackageServer.syncPackages = function () {
         version = this.transformVersionDocument(version);
         ({ numberAffected, insertedId } = this.Versions.upsert(version._id, version));
         if (insertedId) {
-          assert.strictEqual(insertedId, version._id);
           newVersions++;
           updatedVersions += numberAffected - 1;
         } else {
@@ -161,7 +160,6 @@ PackageServer.syncPackages = function () {
       try {
         ({ numberAffected, insertedId } = this.Builds.upsert(build._id, build));
         if (insertedId) {
-          assert.strictEqual(insertedId, build._id);
           newBuilds++;
           updatedBuilds += numberAffected - 1;
         } else {
@@ -182,7 +180,6 @@ PackageServer.syncPackages = function () {
       try {
         ({ numberAffected, insertedId } = this.ReleaseTracks.upsert(releaseTrack._id, releaseTrack));
         if (insertedId) {
-          assert.strictEqual(insertedId, releaseTrack._id);
           newReleaseTracks++;
           updatedReleaseTracks += numberAffected - 1;
         } else {
@@ -203,7 +200,6 @@ PackageServer.syncPackages = function () {
       try {
         ({ numberAffected, insertedId } = this.ReleaseVersions.upsert(releaseVersion._id, releaseVersion));
         if (insertedId) {
-          assert.strictEqual(insertedId, releaseVersion._id);
           newReleaseVersions++;
           updatedReleaseVersions += numberAffected - 1;
         } else {
