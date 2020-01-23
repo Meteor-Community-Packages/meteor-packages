@@ -91,7 +91,7 @@ PackageServer.syncPackages = function () {
 
     const result = connection.call('syncNewPackageData', syncToken);
 
-    if (result.resetData) {
+    if (this.isSyncCompleted() && result.resetData) {
       this.Packages.remove({});
       this.Versions.remove({});
       this.Builds.remove({});
@@ -271,18 +271,17 @@ PackageServer.setSyncCompleted = function () {
 };
 
 PackageServer.syncStats = async function () {
-  const defaultDate = new Date();
-  const { current = defaultDate, latest = defaultDate } = this.SyncState.findOne({ _id: this.STATS_SYNC_ID }) || {};
+  const { current, latest } = this.SyncState.findOne({ _id: this.STATS_SYNC_ID });
 
   if (current < latest) {
     // We update current using it's setDate method.
     // eslint complains for lack of explicit update so we disable it for the next line
     while (current <= latest) { // eslint-disable-line
-      loggingEnabled && console.log('Syncing Stats For ', current.toLocaleString());
       let statsBatch = PackageServer.rawStats.initializeOrderedBulkOp();
       let packagesBatch = PackageServer.rawPackages.initializeOrderedBulkOp();
       try {
         const dateString = `${current.getFullYear()}-${(current.getMonth() + 1).toString().padStart(2, 0)}-${current.getDate().toString().padStart(2, 0)}`;
+        loggingEnabled && console.log('Syncing Stats For ', dateString);
         const statsUrl = `${this.URL}/stats/v1/${dateString}`;
         const response = HTTP.get(statsUrl);
         const content = response.content.trim();
