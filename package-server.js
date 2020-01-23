@@ -8,4 +8,5 @@ export class PackageServer {
   static ReleaseVersions = new Mongo.Collection('PackageServer.ReleaseVersions');
   static LatestPackages = new Mongo.Collection('PackageServer.LatestPackages');
   static SyncState = new Mongo.Collection('PackageServer.SyncState');
+  static Stats = new Mongo.Collection('PackageServer.Stats');
 }

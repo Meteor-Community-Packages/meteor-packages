@@ -1,15 +1,30 @@
-import { Meteor } from 'meteor/meteor';
 import { Mongo } from 'meteor/mongo';
 import { DDP } from 'meteor/ddp';
+import { Random } from 'meteor/random';
 import { PackageVersion } from 'meteor/package-version-parser';
+import { HTTP } from 'meteor/http';
+
 import Fiber from 'fibers';
-import assert from 'assert';
 
 import { PackageServer } from './package-server';
 
+let loggingEnabled;
+let syncOptions;
+
 PackageServer.SYNC_TOKEN_ID = 'syncToken';
 PackageServer.LAST_UPDATED_ID = 'lastUpdated';
+PackageServer.STATS_SYNC_ID = 'statsSync';
+PackageServer.FULL_SYNC_ID = 'fullSync';
+PackageServer.URL = 'https://packages.meteor.com';
 
+PackageServer.connection = null;
+
+PackageServer.Packages._ensureIndex({
+  name: 1,
+});
+PackageServer.Stats._ensureIndex({
+  name: 1,
+});
 PackageServer.Versions._ensureIndex({
   packageName: 1,
 });
@@ -41,6 +56,11 @@ PackageServer.LatestPackages._ensureIndex({
 PackageServer.LatestPackages._ensureIndex({
   'publishedBy.username': 1,
 });
+
+PackageServer.rawStats = PackageServer.Stats.rawCollection();
+PackageServer.rawPackages = PackageServer.Packages.rawCollection();
+PackageServer.rawLatestPackages = PackageServer.LatestPackages.rawCollection();
+PackageServer.rawVersions = PackageServer.Versions.rawCollection();
 
 // Version documents provided from Meteor API can contain dots in object keys which
 // is not allowed by MongoDB, so we transform document to a version without them.
@@ -59,23 +79,26 @@ PackageServer.transformVersionDocument = function (document) {
   return document;
 };
 
-PackageServer.sync = function (connection) {
+PackageServer.syncPackages = function () {
+  const connection = this.getServerConnection();
+
   while (true) {
     var error, insertedId, numberAffected;
     const { syncToken } = this.SyncState.findOne(this.SYNC_TOKEN_ID);
 
-    console.log('Running packages sync for:', syncToken);
+    loggingEnabled && console.log('Running packages sync for:', syncToken);
 
     const result = connection.call('syncNewPackageData', syncToken);
 
-    if (result.resetData) {
+    if (this.isSyncCompleted() && result.resetData) {
       this.Packages.remove({});
       this.Versions.remove({});
       this.Builds.remove({});
       this.ReleaseTracks.remove({});
       this.ReleaseVersions.remove({});
       this.LatestPackages.remove({});
-
+      this.Stats.remove({});
+      this.SyncState.remove({ _id: this.STATS_SYNC_ID });
       this.SyncState.update(
         { _id: this.LAST_UPDATED_ID },
         {
@@ -93,7 +116,7 @@ PackageServer.sync = function (connection) {
 
     packageRecords.forEach(packageRecord => {
       try {
-        ({ numberAffected, insertedId } = this.Packages.upsert(packageRecord._id, packageRecord));
+        ({ numberAffected, insertedId } = this.Packages.upsert(packageRecord._id, { $set: packageRecord }));
         if (insertedId && insertedId === packageRecord._id) {
           newPackages++;
           updatedPackages += numberAffected - 1;
@@ -116,7 +139,6 @@ PackageServer.sync = function (connection) {
         version = this.transformVersionDocument(version);
         ({ numberAffected, insertedId } = this.Versions.upsert(version._id, version));
         if (insertedId) {
-          assert.strictEqual(insertedId, version._id);
           newVersions++;
           updatedVersions += numberAffected - 1;
         } else {
@@ -133,11 +155,10 @@ PackageServer.sync = function (connection) {
 
     const builds = (result.collections && result.collections.builds) || [];
 
-    builds.forEach(build => {
+    syncOptions.builds && builds.forEach(build => {
       try {
         ({ numberAffected, insertedId } = this.Builds.upsert(build._id, build));
         if (insertedId) {
-          assert.strictEqual(insertedId, build._id);
           newBuilds++;
           updatedBuilds += numberAffected - 1;
         } else {
@@ -154,11 +175,10 @@ PackageServer.sync = function (connection) {
 
     const releaseTracks = (result.collections && result.collections.releaseTracks) || [];
 
-    releaseTracks.forEach(releaseTrack => {
+    syncOptions.releases && releaseTracks.forEach(releaseTrack => {
       try {
         ({ numberAffected, insertedId } = this.ReleaseTracks.upsert(releaseTrack._id, releaseTrack));
         if (insertedId) {
-          assert.strictEqual(insertedId, releaseTrack._id);
           newReleaseTracks++;
           updatedReleaseTracks += numberAffected - 1;
         } else {
@@ -175,11 +195,10 @@ PackageServer.sync = function (connection) {
 
     const releaseVersions = (result.collections && result.collections.releaseVersions) || [];
 
-    releaseVersions.forEach(releaseVersion => {
+    syncOptions.releases && releaseVersions.forEach(releaseVersion => {
       try {
         ({ numberAffected, insertedId } = this.ReleaseVersions.upsert(releaseVersion._id, releaseVersion));
         if (insertedId) {
-          assert.strictEqual(insertedId, releaseVersion._id);
           newReleaseVersions++;
           updatedReleaseVersions += numberAffected - 1;
         } else {
@@ -191,30 +210,32 @@ PackageServer.sync = function (connection) {
       }
     });
 
-    if (newPackages || updatedPackages) {
-      console.log(
-        `PackageServer.Packages - all: ${this.Packages.find().count()}, new: ${newPackages}, updated: ${updatedPackages}`
-      );
-    }
-    if (newVersions || updatedVersions) {
-      console.log(
-        `PackageServer.Versions - all: ${this.Versions.find().count()}, new: ${newVersions}, updated: ${updatedVersions}`
-      );
-    }
-    if (newBuilds || updatedBuilds) {
-      console.log(
-        `PackageServer.Builds - all: ${this.Builds.find().count()}, new: ${newBuilds}, updated: ${updatedBuilds}`
-      );
-    }
-    if (newReleaseTracks || updatedReleaseTracks) {
-      console.log(
-        `PackageServer.ReleaseTracks - all: ${this.ReleaseTracks.find().count()}, new: ${newReleaseTracks}, updated: ${updatedReleaseTracks}`
-      );
-    }
-    if (newReleaseVersions || updatedReleaseVersions) {
-      console.log(
-        `PackageServer.ReleaseVersions - all: ${this.ReleaseVersions.find().count()}, new: ${newReleaseVersions}, updated: ${updatedReleaseVersions}`
-      );
+    if (loggingEnabled) {
+      if (newPackages || updatedPackages) {
+        console.log(
+          `PackageServer.Packages - all: ${this.Packages.find().count()}, new: ${newPackages}, updated: ${updatedPackages}`
+        );
+      }
+      if (newVersions || updatedVersions) {
+        console.log(
+          `PackageServer.Versions - all: ${this.Versions.find().count()}, new: ${newVersions}, updated: ${updatedVersions}`
+        );
+      }
+      if (newBuilds || updatedBuilds) {
+        console.log(
+          `PackageServer.Builds - all: ${this.Builds.find().count()}, new: ${newBuilds}, updated: ${updatedBuilds}`
+        );
+      }
+      if (newReleaseTracks || updatedReleaseTracks) {
+        console.log(
+          `PackageServer.ReleaseTracks - all: ${this.ReleaseTracks.find().count()}, new: ${newReleaseTracks}, updated: ${updatedReleaseTracks}`
+        );
+      }
+      if (newReleaseVersions || updatedReleaseVersions) {
+        console.log(
+          `PackageServer.ReleaseVersions - all: ${this.ReleaseVersions.find().count()}, new: ${newReleaseVersions}, updated: ${updatedReleaseVersions}`
+        );
+      }
     }
 
     // We store the new token only after all data in the result has been processed. This assures
@@ -229,9 +250,77 @@ PackageServer.sync = function (connection) {
     );
 
     if (result.upToDate) {
+      loggingEnabled && console.log('Finished Syncing Packages');
+      if (!this.isSyncCompleted()) {
+        this.setSyncCompleted();
+        this.deriveLatestPackagesFromVersions();
+        this.syncStats();
+      }
       return;
     }
   }
+};
+
+let syncCompleted = false;
+PackageServer.isSyncCompleted = function () {
+  return syncCompleted || this.SyncState.findOne(this.FULL_SYNC_ID);
+};
+
+PackageServer.setSyncCompleted = function () {
+  this.SyncState.upsert({ _id: this.FULL_SYNC_ID }, { complete: true });
+};
+
+PackageServer.syncStats = async function () {
+  const { current, latest } = this.SyncState.findOne({ _id: this.STATS_SYNC_ID });
+
+  if (current < latest) {
+    // We update current using it's setDate method.
+    // eslint complains for lack of explicit update so we disable it for the next line
+    while (current <= latest) { // eslint-disable-line
+      let statsBatch = PackageServer.rawStats.initializeOrderedBulkOp();
+      let packagesBatch = PackageServer.rawPackages.initializeOrderedBulkOp();
+      try {
+        const dateString = `${current.getFullYear()}-${(current.getMonth() + 1).toString().padStart(2, 0)}-${current.getDate().toString().padStart(2, 0)}`;
+        loggingEnabled && console.log('Syncing Stats For ', dateString);
+        const statsUrl = `${this.URL}/stats/v1/${dateString}`;
+        const response = HTTP.get(statsUrl);
+        const content = response.content.trim();
+        let stats = content.length ? content.split('\n') : [];
+
+        // stats is an array of strings because someone at MDG forgot JSON exists.
+        // Therefor we need to loop and parse each string
+        if (stats.length) {
+          stats.forEach(statDoc => {
+            let doc = JSON.parse(statDoc);
+            const { name, totalAdds, directAdds } = doc;
+            doc._id = Random.id();
+            doc.date = current;
+            statsBatch.insert(doc);
+            packagesBatch.find({ name }).update({ $inc: { totalAdds, directAdds } });
+          });
+          await statsBatch.execute();
+          await packagesBatch.execute();
+        }
+      } catch (error) {
+        if (!(error.response && error.response.statusCode === 404)) {
+          console.log(error);
+        }
+        /*
+            We just ignore the error if it's a 404 from the package server. Must be due to not having stats for a certain day?
+          */
+      }
+
+      // update the last date of packages stats that we have processed
+      this.SyncState.update(
+        { _id: this.STATS_SYNC_ID },
+        { $set: { current } },
+      );
+
+      // update the current date to the next day so we eventually break out
+      current.setDate(current.getDate() + 1);
+    }
+  }
+  loggingEnabled && console.log('Full Sync Finished');
 };
 
 PackageServer.fieldsToModifier = function (fields) {
@@ -255,39 +344,55 @@ PackageServer.fieldsToModifier = function (fields) {
   return modifier;
 };
 
-PackageServer.insertLatestPackage = function (document) {
-  while (true) {
-    const existingDocument = this.LatestPackages.findOne({
-      _id: {
-        $ne: document._id,
+PackageServer.deriveLatestPackagesFromVersions = async function () {
+  loggingEnabled && console.log('deriving latest packages');
+  const packageNames = await PackageServer.rawVersions.distinct('packageName');
+  const bulk = PackageServer.rawLatestPackages.initializeUnorderedBulkOp();
+
+  packageNames.forEach((packageName, index) => {
+    const latestVersion = this.determineLatestPackageVersion(packageName);
+    bulk.insert(this.transformVersionDocument(latestVersion));
+  });
+
+  try {
+    await bulk.execute();
+  } catch (error) {
+    console.log(error);
+  }
+
+  this.SyncState.update(
+    { _id: this.LAST_UPDATED_ID },
+    {
+      $set: {
+        lastUpdated: new Date().valueOf(),
       },
-      packageName: document.packageName,
-    });
-
-    if (existingDocument) {
-      if (PackageVersion.lessThan(existingDocument.version, document.version)) {
-        // We have an older version, remove it.
-        this.LatestPackages.remove(existingDocument._id);
-        continue;
-      } else {
-        // We have a newer version, don't do anything.
-        return;
-      }
-    } else {
-      // We do not have any other version (anymore). Let's continue.
-      break;
     }
-  }
+  );
+};
 
-  // TODO: Slight race condition here. There might be another document inserted between removal and this insertion.
-  const { insertedId } = this.LatestPackages.upsert(document._id, document);
-  if (insertedId) {
-    return assert.strictEqual(insertedId, document._id);
+PackageServer.determineLatestPackageVersion = function (packageName) {
+  let newestPackage;
+  this.Versions.find({ packageName }).forEach(document => {
+    if (!newestPackage || PackageVersion.lessThan(newestPackage.version, document.version)) {
+      newestPackage = document;
+    }
+  });
+  return newestPackage;
+};
+
+PackageServer.replaceLatestPackageIfNewer = function (document) {
+  loggingEnabled && console.log('replacing:', document.packageName);
+  const { packageName } = document;
+  const existingDocument = this.LatestPackages.findOne({ packageName });
+
+  if (existingDocument && PackageVersion.lessThan(existingDocument.version, document.version)) {
+    this.LatestPackages.remove(existingDocument);
   }
+  this.LatestPackages.insert(document);
 };
 
 PackageServer.latestPackagesObserve = function () {
-  console.log('Starting latest packages observe');
+  loggingEnabled && console.log('Starting latest packages observe');
 
   // We try to create the initial document.
   this.SyncState.upsert(
@@ -295,13 +400,12 @@ PackageServer.latestPackagesObserve = function () {
       _id: this.LAST_UPDATED_ID,
     },
     {
-      $set: {
-        lastUpdated: null,
+      $setOnInsert: {
+        lastUpdated: new Date().valueOf(),
       },
     }
   );
 
-  let timeoutHandle = null;
   let newestLastUpdated = null;
 
   // Update sync state after 30 seconds of no updates. This assures that if there was a series of observe
@@ -316,140 +420,137 @@ PackageServer.latestPackagesObserve = function () {
       newestLastUpdated = newLastUpdated;
     }
 
-    Meteor.clearTimeout(timeoutHandle);
-    return (timeoutHandle = Meteor.setTimeout(() => {
-      const lastUpdated = newestLastUpdated;
-      newestLastUpdated = null;
+    const lastUpdated = newestLastUpdated;
+    newestLastUpdated = null;
 
-      return this.SyncState.update(
-        { _id: this.LAST_UPDATED_ID },
-        {
-          $set: {
-            lastUpdated,
-          },
-        }
-      );
-    }, 30 * 1000)); // ms
+    this.SyncState.update(
+      { _id: this.LAST_UPDATED_ID },
+      {
+        $set: {
+          lastUpdated,
+        },
+      }
+    );
   };
 
   let observeHandle = null;
-  let currentLastUpdated = null;
+  let { lastUpdated: currentLastUpdated } = this.SyncState.findOne(this.LAST_UPDATED_ID);
 
   const startObserve = () => {
-    let query;
-    if (observeHandle != null) {
-      observeHandle.stop();
-    }
-    observeHandle = null;
+    if (this.isSyncCompleted()) {
+      let query = {};
+      if (observeHandle != null) {
+        observeHandle.stop();
+      }
+      observeHandle = null;
 
-    if (currentLastUpdated) {
-      query = {
-        lastUpdated: {
+      if (currentLastUpdated) {
+        query.lasUpdated = {
           $gte: new Date(currentLastUpdated),
+        };
+      }
+
+      observeHandle = this.Versions.find(query).observeChanges({
+        added: (id, fields) => {
+          this.replaceLatestPackageIfNewer({ _id: id, ...fields });
+          updateSyncState(fields.lastUpdated.valueOf());
         },
-      };
-    } else {
-      query = {};
-    }
 
-    return (observeHandle = this.Versions.find(query).observeChanges({
-      added: (id, fields) => {
-        this.insertLatestPackage(Object.assign({ _id: id }, fields));
-
-        return updateSyncState(fields.lastUpdated.valueOf());
-      },
-
-      changed: (id, fields) => {
+        changed: (id, fields) => {
         // Will possibly not update anything, if the change is for an older package.
-        this.LatestPackages.update(id, this.fieldsToModifier(fields));
+          this.LatestPackages.update(id, this.fieldsToModifier(fields));
 
-        if ('lastUpdated' in fields) {
-          return updateSyncState(fields.lastUpdated.valueOf());
-        }
-      },
+          if ('lastUpdated' in fields) {
+            updateSyncState(fields.lastUpdated.valueOf());
+          }
+        },
 
-      removed: id => {
-        const oldPackage = this.LatestPackages.findOne(id);
+        removed: id => {
+          const oldPackage = this.LatestPackages.findOne(id);
 
-        // Package already removed?
-        if (!oldPackage) {
-          return;
-        }
+          if (oldPackage) {
+            this.LatestPackages.remove(id);
+            const newPackage = this.determineLatestPackageVersion(oldPackage.packageName);
 
-        // We remove it.
-        this.LatestPackages.remove(id);
-
-        // We find the new latest package.
-        return this.Versions.find({ packageName: oldPackage.packageName }).forEach(document => {
-          return this.insertLatestPackage(document);
-        });
-      },
-    }));
+            if (newPackage) {
+              this.latestPackages.insert(newPackage);
+            }
+          }
+        },
+      });
+    }
   };
 
   const lastUpdatedNewer = () => {
     // We do not do anything, versions observe will handle that.
     // But we have to start the observe the first time if it is not yet running.
     if (!observeHandle) {
-      return startObserve();
+      startObserve();
     }
   };
 
   const lastUpdatedOlder = () => {
     // We have to restart the versions observe.
-    return startObserve();
+    startObserve();
   };
 
   const updateLastUpdated = newLastUpdated => {
     if (!currentLastUpdated) {
       currentLastUpdated = newLastUpdated;
       if (currentLastUpdated) {
-        return lastUpdatedNewer();
+        lastUpdatedNewer();
       } else {
         // Not currentLastUpdated nor newLastUpdated were true, we have not
         // yet started the observe at all. Let's start it now.
-        return startObserve();
+        startObserve();
       }
     } else if (!newLastUpdated) {
       currentLastUpdated = null;
       if (currentLastUpdated) {
-        return lastUpdatedOlder();
+        lastUpdatedOlder();
       }
     } else if (currentLastUpdated > newLastUpdated) {
       currentLastUpdated = newLastUpdated;
-      return lastUpdatedOlder();
+      lastUpdatedOlder();
     } else if (currentLastUpdated < newLastUpdated) {
       currentLastUpdated = newLastUpdated;
-      return lastUpdatedNewer();
+      lastUpdatedNewer();
     }
   };
 
   this.SyncState.find(this.LAST_UPDATED_ID).observe({
     added: document => {
-      return updateLastUpdated((document.lastUpdated && document.lastUpdated.valueOf()) || null);
+      updateLastUpdated((document.lastUpdated && document.lastUpdated.valueOf()) || null);
     },
 
     changed: (document, oldDocument) => {
-      return updateLastUpdated((document.lastUpdated && document.lastUpdated.valueOf()) || null);
+      updateLastUpdated((document.lastUpdated && document.lastUpdated.valueOf()) || null);
     },
 
     removed: oldDocument => {
-      return updateLastUpdated(null);
+      updateLastUpdated(null);
     },
   });
 
-  return console.log('Latest packages observe initialized');
+  loggingEnabled && console.log('Latest packages observe initialized');
+};
+
+PackageServer.getServerConnection = function () {
+  if (!PackageServer.connection) {
+    PackageServer.connection = DDP.connect(this.URL);
+  }
+  return PackageServer.connection;
 };
 
 PackageServer.subscribeToPackages = function () {
-  console.log('Starting all packages subscription');
+  loggingEnabled && console.log('Starting all packages subscription');
 
-  const connection = DDP.connect('https://packages.meteor.com');
+  const connection = this.getServerConnection();
 
   const Defaults = new Mongo.Collection('defaults', connection);
   const Changes = new Mongo.Collection('changes', connection);
 
-  return connection.subscribe('defaults', () => {
+  connection.subscribe('defaults', () => {
     this.SyncState.upsert(
       { _id: this.SYNC_TOKEN_ID },
       {
@@ -462,22 +563,64 @@ PackageServer.subscribeToPackages = function () {
     connection.subscribe('changes', () => {
       return Changes.find({}).observe({
         added: document => {
-          return this.sync(connection);
+          return this.syncPackages();
         },
         changed: (document, oldDocument) => {
-          return this.sync(connection);
+          return this.syncPackages();
         },
       });
     });
 
-    return console.log('All packages subscription initialized');
+    loggingEnabled && console.log('All packages subscription initialized');
   });
 };
 
-PackageServer.startSyncing = function () {
-  return new Fiber(() => {
+PackageServer.subscribeToStats = function () {
+  loggingEnabled && console.log('Starting Stats Subscription');
+
+  const connection = this.getServerConnection();
+  const Stats = new Mongo.Collection('stats', connection);
+
+  connection.subscribe('stats', () => {
+    Stats.find({}).observe({
+      added: document => {
+        const { earliest, latest } = document;
+        this.SyncState.upsert(
+          { _id: this.STATS_SYNC_ID },
+          {
+            $set: {
+              latest: new Date(latest.replace('-', '/')),
+            },
+            $setOnInsert: {
+              current: new Date(earliest.replace('-', '/')),
+            },
+          },
+        );
+        if (this.isSyncCompleted()) {
+          this.syncStats();
+        }
+      },
+
+      changed: document => {
+        const { latest } = document;
+        this.SyncState.update(
+          { _id: this.STATS_SYNC_ID },
+          { $set: { latest: new Date(latest.replace('-', '/')) } }
+        );
+        this.syncStats();
+      },
+    });
+  });
+};
+
+PackageServer.startSyncing = function ({ logging = false, sync: { builds = true, releases = true, stats = true } = {} } = {}) {
+  loggingEnabled = logging;
+  syncOptions = { builds, releases, stats };
+
+  new Fiber(async () => {
+    stats && this.subscribeToStats();
+    this.subscribeToPackages();
     this.latestPackagesObserve();
-    return this.subscribeToPackages();
   }).run();
 };
 

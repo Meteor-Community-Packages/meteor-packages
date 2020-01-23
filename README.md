@@ -30,7 +30,15 @@ import { Meteor } from "meteor/meteor";
 import { PackageServer } from "meteor/peerlibrary:meteor-packages";
 
 Meteor.startup(function() {
-  PackageServer.startSyncing();
+  PackageServer.startSyncing({
+    //options - the following are the defaults if not passed
+    logging: false, // When true, informational log messages will be printed to the console
+    sync: {
+      builds: true, // Should information about package builds be stored
+      releases: true, // Should information about Meteor releases and release tracks be stored
+      stats: true, // Should package stats be fetched and stored
+    }
+  });
 });
 ```
 
@@ -44,9 +52,16 @@ Then you can access collections:
 - `PackageServer.ReleaseTracks`
 - `PackageServer.ReleaseVersions`
 - `PackageServer.LatestPackages`
+- `PackageServer.stats`
 
-`LatestPackages` collection is the same as `Versions`, only that it contains only the latest versions of packages.
+> `LatestPackages` collection is the same as `Versions`, only that it contains only the latest versions of packages.
 
 Schema of documents is the same as [described in the documentation](https://github.com/meteor/meteor/wiki/Meteor-Package-Server-API)
-with one exception: in `Versions` collection, `dependencies` field is represented as an array of objects where package
+with a couple exceptions.
+
+1. `Versions` collection's `dependencies` field is represented as an array of objects where package
 name is stored as `packageName` key. This is to support package names with `.` in the name without any problems.
+
+2. `Packages` collection will contain 2 additional fields, `directAdds`, and `totalAdds` which are the direct and total install counts for the corresponding package.
+
+3. `Stats` collection adds the date field to the document for ease of querying chronologically.
