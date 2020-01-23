@@ -58,10 +58,10 @@ PackageServer.LatestPackages._ensureIndex({
   'publishedBy.username': 1,
 });
 
-const statsRaw = PackageServer.Stats.rawCollection();
-const packagesRaw = PackageServer.Packages.rawCollection();
-const latestPackagesRaw = PackageServer.LatestPackages.rawCollection();
-const versionsRaw = PackageServer.Versions.rawCollection();
+PackageServer.rawStats = PackageServer.Stats.rawCollection();
+PackageServer.rawPackages = PackageServer.Packages.rawCollection();
+PackageServer.rawLatestPackages = PackageServer.LatestPackages.rawCollection();
+PackageServer.rawVersions = PackageServer.Versions.rawCollection();
 
 // Version documents provided from Meteor API can contain dots in object keys which
 // is not allowed by MongoDB, so we transform document to a version without them.
