@@ -1,4 +1,3 @@
-import { Meteor } from 'meteor/meteor';
 import { Mongo } from 'meteor/mongo';
 import { DDP } from 'meteor/ddp';
 import { Random } from 'meteor/random';
@@ -424,11 +423,11 @@ PackageServer.latestPackagesObserve = function () {
     const lastUpdated = newestLastUpdated;
     newestLastUpdated = null;
 
-      this.SyncState.update(
-        { _id: this.LAST_UPDATED_ID },
-        {
-          $set: {
-            lastUpdated,
+    this.SyncState.update(
+      { _id: this.LAST_UPDATED_ID },
+      {
+        $set: {
+          lastUpdated,
         },
       }
     );
@@ -442,12 +441,12 @@ PackageServer.latestPackagesObserve = function () {
       let query = {};
       if (observeHandle != null) {
         observeHandle.stop();
-    }
-    observeHandle = null;
+      }
+      observeHandle = null;
 
-    if (currentLastUpdated) {
-      query.lasUpdated = {
-        $gte: new Date(currentLastUpdated),
+      if (currentLastUpdated) {
+        query.lasUpdated = {
+          $gte: new Date(currentLastUpdated),
         };
       }
 
@@ -457,14 +456,14 @@ PackageServer.latestPackagesObserve = function () {
           updateSyncState(fields.lastUpdated.valueOf());
         },
 
-      changed: (id, fields) => {
+        changed: (id, fields) => {
         // Will possibly not update anything, if the change is for an older package.
-        this.LatestPackages.update(id, this.fieldsToModifier(fields));
+          this.LatestPackages.update(id, this.fieldsToModifier(fields));
 
-        if ('lastUpdated' in fields) {
-          updateSyncState(fields.lastUpdated.valueOf());
-        }
-      },
+          if ('lastUpdated' in fields) {
+            updateSyncState(fields.lastUpdated.valueOf());
+          }
+        },
 
         removed: id => {
           const oldPackage = this.LatestPackages.findOne(id);
