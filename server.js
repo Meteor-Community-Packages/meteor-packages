@@ -251,6 +251,7 @@ PackageServer.syncPackages = function () {
     );
 
     if (result.upToDate) {
+      loggingEnabled && console.log('Finished Syncing Packages');
       if (!this.isSyncCompleted()) {
         this.setSyncCompleted();
         this.deriveLatestPackagesFromVersions();
@@ -303,7 +304,7 @@ PackageServer.syncStats = async function () {
         }
       } catch (error) {
         if (!(error.response && error.response.statusCode === 404)) {
-          console.log(Object.keys(error));
+          console.log(error);
         }
         /*
             We just ignore the error if it's a 404 from the package server. Must be due to not having stats for a certain day?
@@ -576,7 +577,7 @@ PackageServer.subscribeToPackages = function () {
 };
 
 PackageServer.subscribeToStats = function () {
-  console.log('Starting Stats Subscription');
+  loggingEnabled && console.log('Starting Stats Subscription');
 
   const connection = this.getServerConnection();
   const Stats = new Mongo.Collection('stats', connection);
