@@ -12,9 +12,9 @@ let loggingEnabled;
 let syncOptions;
 
 PackageServer.SYNC_TOKEN_ID = 'syncToken';
-PackageServer.LAST_UPDATED_ID = 'lastUpdated';
 PackageServer.STATS_SYNC_ID = 'statsSync';
 PackageServer.FULL_SYNC_ID = 'fullSync';
+PackageServer.LATEST_PACKAGES_ID = 'latestPackages';
 PackageServer.URL = 'https://packages.meteor.com';
 
 PackageServer.connection = null;
@@ -62,6 +62,36 @@ PackageServer.rawPackages = PackageServer.Packages.rawCollection();
 PackageServer.rawLatestPackages = PackageServer.LatestPackages.rawCollection();
 PackageServer.rawVersions = PackageServer.Versions.rawCollection();
 
+PackageServer.Versions.after.insert(function (userId, doc) {
+  if (latestPackagesCompleted()) {
+    PackageServer.replaceLatestPackageIfNewer(doc);
+  }
+});
+
+PackageServer.Versions.after.update(function (userId, doc) {
+  if (latestPackagesCompleted()) {
+    const { id, ...fields } = doc;
+    const modifier = PackageServer.fieldsToModifier(fields);
+    PackageServer.LatestPackages.update(doc._id, modifier);
+  }
+}, { fetchPrevious: false });
+
+PackageServer.Versions.after.remove(function (userId, doc) {
+  if (latestPackagesCompleted()) {
+    const { _id } = doc;
+    const oldPackage = PackageServer.LatestPackages.findOne(_id);
+
+    if (oldPackage) {
+      PackageServer.LatestPackages.remove(_id);
+      const newPackage = PackageServer.determineLatestPackageVersion(oldPackage.packageName);
+
+      if (newPackage) {
+        PackageServer.latestPackages.insert(newPackage);
+      }
+    }
+  }
+});
+
 // Version documents provided from Meteor API can contain dots in object keys which
 // is not allowed by MongoDB, so we transform document to a version without them.
 PackageServer.transformVersionDocument = function (document) {
@@ -98,15 +128,7 @@ PackageServer.syncPackages = function () {
       this.ReleaseVersions.remove({});
       this.LatestPackages.remove({});
       this.Stats.remove({});
-      this.SyncState.remove({ _id: this.STATS_SYNC_ID });
-      this.SyncState.update(
-        { _id: this.LAST_UPDATED_ID },
-        {
-          $set: {
-            lastUpdated: null,
-          },
-        }
-      );
+      this.SyncState.remove({});
     }
 
     let newPackages = 0;
@@ -344,6 +366,16 @@ PackageServer.fieldsToModifier = function (fields) {
   return modifier;
 };
 
+let packagesFound = false;
+
+const latestPackagesCompleted = () => {
+  return packagesFound || PackageServer.SyncState.findOne(PackageServer.LATEST_PACKAGES_ID);
+};
+
+const setLatestPackagesCompleted = () => {
+  PackageServer.SyncState.upsert({ _id: PackageServer.LATEST_PACKAGES_ID }, { complete: true });
+};
+
 PackageServer.deriveLatestPackagesFromVersions = async function () {
   loggingEnabled && console.log('deriving latest packages');
   const packageNames = await PackageServer.rawVersions.distinct('packageName');
@@ -360,14 +392,7 @@ PackageServer.deriveLatestPackagesFromVersions = async function () {
     console.log(error);
   }
 
-  this.SyncState.update(
-    { _id: this.LAST_UPDATED_ID },
-    {
-      $set: {
-        lastUpdated: new Date().valueOf(),
-      },
-    }
-  );
+  setLatestPackagesCompleted();
 };
 
 PackageServer.determineLatestPackageVersion = function (packageName) {
@@ -389,150 +414,6 @@ PackageServer.replaceLatestPackageIfNewer = function (document) {
     this.LatestPackages.remove(existingDocument);
   }
   this.LatestPackages.insert(document);
-};
-
-PackageServer.latestPackagesObserve = function () {
-  loggingEnabled && console.log('Starting latest packages observe');
-
-  // We try to create the initial document.
-  this.SyncState.upsert(
-    {
-      _id: this.LAST_UPDATED_ID,
-    },
-    {
-      $setOnInsert: {
-        lastUpdated: new Date().valueOf(),
-      },
-    }
-  );
-
-  let newestLastUpdated = null;
-
-  // Update sync state after 30 seconds of no updates. This assures that if there was a series of observe
-  // callbacks called, we really processed them all. Otherwise we might set state but program might
-  // terminate before we had a chance to process all observe callbacks. Which will mean that those
-  // packages from pending observe callbacks will not be processed the next time the program runs.
-  const updateSyncState = newLastUpdated => {
-    // We allow that in a series of observe callbacks the order of last updated timestamps is
-    // not monotonic. In the case that last updated timestamps are not monotonic between
-    // series of observe callbacks, we will have to (and do) restart the observe.
-    if (!newestLastUpdated || newestLastUpdated < newLastUpdated) {
-      newestLastUpdated = newLastUpdated;
-    }
-
-    const lastUpdated = newestLastUpdated;
-    newestLastUpdated = null;
-
-    this.SyncState.update(
-      { _id: this.LAST_UPDATED_ID },
-      {
-        $set: {
-          lastUpdated,
-        },
-      }
-    );
-  };
-
-  let observeHandle = null;
-  let { lastUpdated: currentLastUpdated } = this.SyncState.findOne(this.LAST_UPDATED_ID);
-
-  const startObserve = () => {
-    if (this.isSyncCompleted()) {
-      let query = {};
-      if (observeHandle != null) {
-        observeHandle.stop();
-      }
-      observeHandle = null;
-
-      if (currentLastUpdated) {
-        query.lasUpdated = {
-          $gte: new Date(currentLastUpdated),
-        };
-      }
-
-      observeHandle = this.Versions.find(query).observeChanges({
-        added: (id, fields) => {
-          this.replaceLatestPackageIfNewer({ _id: id, ...fields });
-          updateSyncState(fields.lastUpdated.valueOf());
-        },
-
-        changed: (id, fields) => {
-        // Will possibly not update anything, if the change is for an older package.
-          this.LatestPackages.update(id, this.fieldsToModifier(fields));
-
-          if ('lastUpdated' in fields) {
-            updateSyncState(fields.lastUpdated.valueOf());
-          }
-        },
-
-        removed: id => {
-          const oldPackage = this.LatestPackages.findOne(id);
-
-          if (oldPackage) {
-            this.LatestPackages.remove(id);
-            const newPackage = this.determineLatestPackageVersion(oldPackage.packageName);
-
-            if (newPackage) {
-              this.latestPackages.insert(newPackage);
-            }
-          }
-        },
-      });
-    }
-  };
-
-  const lastUpdatedNewer = () => {
-    // We do not do anything, versions observe will handle that.
-    // But we have to start the observe the first time if it is not yet running.
-    if (!observeHandle) {
-      startObserve();
-    }
-  };
-
-  const lastUpdatedOlder = () => {
-    // We have to restart the versions observe.
-    startObserve();
-  };
-
-  const updateLastUpdated = newLastUpdated => {
-    if (!currentLastUpdated) {
-      currentLastUpdated = newLastUpdated;
-      if (currentLastUpdated) {
-        lastUpdatedNewer();
-      } else {
-        // Not currentLastUpdated nor newLastUpdated were true, we have not
-        // yet started the observe at all. Let's start it now.
-        startObserve();
-      }
-    } else if (!newLastUpdated) {
-      currentLastUpdated = null;
-      if (currentLastUpdated) {
-        lastUpdatedOlder();
-      }
-    } else if (currentLastUpdated > newLastUpdated) {
-      currentLastUpdated = newLastUpdated;
-      lastUpdatedOlder();
-    } else if (currentLastUpdated < newLastUpdated) {
-      currentLastUpdated = newLastUpdated;
-      lastUpdatedNewer();
-    }
-  };
-
-  this.SyncState.find(this.LAST_UPDATED_ID).observe({
-    added: document => {
-      updateLastUpdated((document.lastUpdated && document.lastUpdated.valueOf()) || null);
-    },
-
-    changed: (document, oldDocument) => {
-      updateLastUpdated((document.lastUpdated && document.lastUpdated.valueOf()) || null);
-    },
-
-    removed: oldDocument => {
-      updateLastUpdated(null);
-    },
-  });
-
-  loggingEnabled && console.log('Latest packages observe initialized');
 };
 
 PackageServer.getServerConnection = function () {
@@ -620,7 +501,6 @@ PackageServer.startSyncing = function ({ logging = false, sync: { builds = true,
   new Fiber(async () => {
     stats && this.subscribeToStats();
     this.subscribeToPackages();
-    this.latestPackagesObserve();
   }).run();
 };
 
