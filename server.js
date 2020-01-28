@@ -109,177 +109,183 @@ PackageServer.transformVersionDocument = function (document) {
   return document;
 };
 
+let busy = false;
+
 PackageServer.syncPackages = function () {
-  const connection = this.getServerConnection();
+  if (!busy) {
+    const connection = this.getServerConnection();
 
-  while (true) {
-    var error, insertedId, numberAffected;
-    const { syncToken } = this.SyncState.findOne(this.SYNC_TOKEN_ID);
+    while (true) {
+      var error, insertedId, numberAffected;
+      const { syncToken } = this.SyncState.findOne(this.SYNC_TOKEN_ID);
 
-    loggingEnabled && console.log('Running packages sync for:', syncToken);
+      loggingEnabled && console.log('Running packages sync for:', syncToken);
 
-    const result = connection.call('syncNewPackageData', syncToken);
+      const result = connection.call('syncNewPackageData', syncToken);
 
-    if (this.isSyncCompleted() && result.resetData) {
-      this.Packages.remove({});
-      this.Versions.remove({});
-      this.Builds.remove({});
-      this.ReleaseTracks.remove({});
-      this.ReleaseVersions.remove({});
-      this.LatestPackages.remove({});
-      this.Stats.remove({});
-      this.SyncState.remove({});
+      if (this.isSyncCompleted() && result.resetData) {
+        this.Packages.remove({});
+        this.Versions.remove({});
+        this.Builds.remove({});
+        this.ReleaseTracks.remove({});
+        this.ReleaseVersions.remove({});
+        this.LatestPackages.remove({});
+        this.Stats.remove({});
+        this.SyncState.remove({});
+      }
+
+      let newPackages = 0;
+      let updatedPackages = 0;
+
+      const packageRecords = (result.collections && result.collections.packages) || [];
+
+      packageRecords.forEach(packageRecord => {
+        try {
+          ({ numberAffected, insertedId } = this.Packages.upsert(packageRecord._id, { $set: packageRecord }));
+          if (insertedId && insertedId === packageRecord._id) {
+            newPackages++;
+            updatedPackages += numberAffected - 1;
+          } else {
+            updatedPackages += numberAffected;
+          }
+        } catch (error1) {
+          error = error1;
+          console.log(error, packageRecord);
+        }
+      });
+
+      let newVersions = 0;
+      let updatedVersions = 0;
+
+      const versions = (result.collections && result.collections.versions) || [];
+
+      versions.forEach(version => {
+        try {
+          version = this.transformVersionDocument(version);
+          ({ numberAffected, insertedId } = this.Versions.upsert(version._id, version));
+          if (insertedId) {
+            newVersions++;
+            updatedVersions += numberAffected - 1;
+          } else {
+            updatedVersions += numberAffected;
+          }
+        } catch (error2) {
+          error = error2;
+          console.log(error, version);
+        }
+      });
+
+      let newBuilds = 0;
+      let updatedBuilds = 0;
+
+      const builds = (result.collections && result.collections.builds) || [];
+
+      syncOptions.builds && builds.forEach(build => {
+        try {
+          ({ numberAffected, insertedId } = this.Builds.upsert(build._id, build));
+          if (insertedId) {
+            newBuilds++;
+            updatedBuilds += numberAffected - 1;
+          } else {
+            updatedBuilds += numberAffected;
+          }
+        } catch (error3) {
+          error = error3;
+          console.log(error, build);
+        }
+      });
+
+      let newReleaseTracks = 0;
+      let updatedReleaseTracks = 0;
+
+      const releaseTracks = (result.collections && result.collections.releaseTracks) || [];
+
+      syncOptions.releases && releaseTracks.forEach(releaseTrack => {
+        try {
+          ({ numberAffected, insertedId } = this.ReleaseTracks.upsert(releaseTrack._id, releaseTrack));
+          if (insertedId) {
+            newReleaseTracks++;
+            updatedReleaseTracks += numberAffected - 1;
+          } else {
+            updatedReleaseTracks += numberAffected;
+          }
+        } catch (error4) {
+          error = error4;
+          console.log(error, releaseTrack);
+        }
+      });
+
+      let newReleaseVersions = 0;
+      let updatedReleaseVersions = 0;
+
+      const releaseVersions = (result.collections && result.collections.releaseVersions) || [];
+
+      syncOptions.releases && releaseVersions.forEach(releaseVersion => {
+        try {
+          ({ numberAffected, insertedId } = this.ReleaseVersions.upsert(releaseVersion._id, releaseVersion));
+          if (insertedId) {
+            newReleaseVersions++;
+            updatedReleaseVersions += numberAffected - 1;
+          } else {
+            updatedReleaseVersions += numberAffected;
+          }
+        } catch (error5) {
+          error = error5;
+          console.log(error, releaseVersion);
+        }
+      });
+
+      if (loggingEnabled) {
+        if (newPackages || updatedPackages) {
+          console.log(
+            `PackageServer.Packages - all: ${this.Packages.find().count()}, new: ${newPackages}, updated: ${updatedPackages}`
+          );
+        }
+        if (newVersions || updatedVersions) {
+          console.log(
+            `PackageServer.Versions - all: ${this.Versions.find().count()}, new: ${newVersions}, updated: ${updatedVersions}`
+          );
+        }
+        if (newBuilds || updatedBuilds) {
+          console.log(
+            `PackageServer.Builds - all: ${this.Builds.find().count()}, new: ${newBuilds}, updated: ${updatedBuilds}`
+          );
+        }
+        if (newReleaseTracks || updatedReleaseTracks) {
+          console.log(
+            `PackageServer.ReleaseTracks - all: ${this.ReleaseTracks.find().count()}, new: ${newReleaseTracks}, updated: ${updatedReleaseTracks}`
+          );
+        }
+        if (newReleaseVersions || updatedReleaseVersions) {
+          console.log(
+            `PackageServer.ReleaseVersions - all: ${this.ReleaseVersions.find().count()}, new: ${newReleaseVersions}, updated: ${updatedReleaseVersions}`
+          );
+        }
+      }
+
+      // We store the new token only after all data in the result has been processed. This assures
+      // that if this run has been prematurely terminated, we restart again correctly next time.
+      this.SyncState.update(
+        { _id: this.SYNC_TOKEN_ID },
+        {
+          $set: {
+            syncToken: result.syncToken,
+          },
+        }
+      );
+
+      if (result.upToDate) {
+        loggingEnabled && console.log('Finished Syncing Packages');
+        if (!this.isSyncCompleted()) {
+          this.setSyncCompleted();
+          this.deriveLatestPackagesFromVersions();
+          this.syncStats();
+        }
+        break;
+      }
     }
 
-    let newPackages = 0;
-    let updatedPackages = 0;
-
-    const packageRecords = (result.collections && result.collections.packages) || [];
-
-    packageRecords.forEach(packageRecord => {
-      try {
-        ({ numberAffected, insertedId } = this.Packages.upsert(packageRecord._id, { $set: packageRecord }));
-        if (insertedId && insertedId === packageRecord._id) {
-          newPackages++;
-          updatedPackages += numberAffected - 1;
-        } else {
-          updatedPackages += numberAffected;
-        }
-      } catch (error1) {
-        error = error1;
-        console.log(error, packageRecord);
-      }
-    });
-
-    let newVersions = 0;
-    let updatedVersions = 0;
-
-    const versions = (result.collections && result.collections.versions) || [];
-
-    versions.forEach(version => {
-      try {
-        version = this.transformVersionDocument(version);
-        ({ numberAffected, insertedId } = this.Versions.upsert(version._id, version));
-        if (insertedId) {
-          newVersions++;
-          updatedVersions += numberAffected - 1;
-        } else {
-          updatedVersions += numberAffected;
-        }
-      } catch (error2) {
-        error = error2;
-        console.log(error, version);
-      }
-    });
-
-    let newBuilds = 0;
-    let updatedBuilds = 0;
-
-    const builds = (result.collections && result.collections.builds) || [];
-
-    syncOptions.builds && builds.forEach(build => {
-      try {
-        ({ numberAffected, insertedId } = this.Builds.upsert(build._id, build));
-        if (insertedId) {
-          newBuilds++;
-          updatedBuilds += numberAffected - 1;
-        } else {
-          updatedBuilds += numberAffected;
-        }
-      } catch (error3) {
-        error = error3;
-        console.log(error, build);
-      }
-    });
-
-    let newReleaseTracks = 0;
-    let updatedReleaseTracks = 0;
-
-    const releaseTracks = (result.collections && result.collections.releaseTracks) || [];
-
-    syncOptions.releases && releaseTracks.forEach(releaseTrack => {
-      try {
-        ({ numberAffected, insertedId } = this.ReleaseTracks.upsert(releaseTrack._id, releaseTrack));
-        if (insertedId) {
-          newReleaseTracks++;
-          updatedReleaseTracks += numberAffected - 1;
-        } else {
-          updatedReleaseTracks += numberAffected;
-        }
-      } catch (error4) {
-        error = error4;
-        console.log(error, releaseTrack);
-      }
-    });
-
-    let newReleaseVersions = 0;
-    let updatedReleaseVersions = 0;
-
-    const releaseVersions = (result.collections && result.collections.releaseVersions) || [];
-
-    syncOptions.releases && releaseVersions.forEach(releaseVersion => {
-      try {
-        ({ numberAffected, insertedId } = this.ReleaseVersions.upsert(releaseVersion._id, releaseVersion));
-        if (insertedId) {
-          newReleaseVersions++;
-          updatedReleaseVersions += numberAffected - 1;
-        } else {
-          updatedReleaseVersions += numberAffected;
-        }
-      } catch (error5) {
-        error = error5;
-        console.log(error, releaseVersion);
-      }
-    });
-
-    if (loggingEnabled) {
-      if (newPackages || updatedPackages) {
-        console.log(
-          `PackageServer.Packages - all: ${this.Packages.find().count()}, new: ${newPackages}, updated: ${updatedPackages}`
-        );
-      }
-      if (newVersions || updatedVersions) {
-        console.log(
-          `PackageServer.Versions - all: ${this.Versions.find().count()}, new: ${newVersions}, updated: ${updatedVersions}`
-        );
-      }
-      if (newBuilds || updatedBuilds) {
-        console.log(
-          `PackageServer.Builds - all: ${this.Builds.find().count()}, new: ${newBuilds}, updated: ${updatedBuilds}`
-        );
-      }
-      if (newReleaseTracks || updatedReleaseTracks) {
-        console.log(
-          `PackageServer.ReleaseTracks - all: ${this.ReleaseTracks.find().count()}, new: ${newReleaseTracks}, updated: ${updatedReleaseTracks}`
-        );
-      }
-      if (newReleaseVersions || updatedReleaseVersions) {
-        console.log(
-          `PackageServer.ReleaseVersions - all: ${this.ReleaseVersions.find().count()}, new: ${newReleaseVersions}, updated: ${updatedReleaseVersions}`
-        );
-      }
-    }
-
-    // We store the new token only after all data in the result has been processed. This assures
-    // that if this run has been prematurely terminated, we restart again correctly next time.
-    this.SyncState.update(
-      { _id: this.SYNC_TOKEN_ID },
-      {
-        $set: {
-          syncToken: result.syncToken,
-        },
-      }
-    );
-
-    if (result.upToDate) {
-      loggingEnabled && console.log('Finished Syncing Packages');
-      if (!this.isSyncCompleted()) {
-        this.setSyncCompleted();
-        this.deriveLatestPackagesFromVersions();
-        this.syncStats();
-      }
-      return;
-    }
+    busy = false;
   }
 };
 
