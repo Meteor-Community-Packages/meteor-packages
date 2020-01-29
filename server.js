@@ -113,14 +113,13 @@ const syncPackages = () => {
   if (!busy) {
     busy = true;
     const connection = getServerConnection();
+    let { syncToken } = PackageServer.SyncState.findOne(SYNC_TOKEN_ID);
+    let result = connection.call('syncNewPackageData', syncToken);
 
-    while (true) {
+    while (!result.upToDate) {
       var error, insertedId, numberAffected;
-      const { syncToken } = PackageServer.SyncState.findOne(SYNC_TOKEN_ID);
 
       loggingEnabled && console.log('Running packages sync for:', syncToken);
-
-      const result = connection.call('syncNewPackageData', syncToken);
 
       if (isSyncCompleted() && result.resetData) {
         PackageServer.Packages.remove({});
@@ -273,18 +272,19 @@ const syncPackages = () => {
         }
       );
 
-      if (result.upToDate) {
-        loggingEnabled && console.log('Finished Syncing Packages');
-        if (!isSyncCompleted()) {
-          setSyncCompleted();
-          deriveLatestPackagesFromVersions();
-          syncStats();
-        }
-        break;
+      result = connection.call('syncNewPackageData', result.syncToken);
+    }
+
+    if (result.upToDate) {
+      loggingEnabled && console.log('Finished Syncing Packages');
+      if (!isSyncCompleted()) {
+        setSyncCompleted();
+        deriveLatestPackagesFromVersions();
+        syncStats();
       }
     }
 
-    busy = false;
+    setTimeout(() => { busy = false; }, 1000);
   }
 };
 
