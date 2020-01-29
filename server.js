@@ -111,6 +111,7 @@ let busy = false;
 
 const syncPackages = () => {
   if (!busy) {
+    busy = true;
     const connection = getServerConnection();
 
     while (true) {
