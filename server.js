@@ -107,6 +107,12 @@ const transformVersionDocument = (document) => {
   return document;
 };
 
+const isTokenNewer = (previousToken, nextToken) => {
+  return Object.keys(nextToken).some((key) => {
+    return nextToken[key] !== previousToken[key];
+  });
+};
+
 let busy = false;
 
 const syncPackages = () => {
@@ -114,10 +120,17 @@ const syncPackages = () => {
     busy = true;
     const connection = getServerConnection();
     let { syncToken } = PackageServer.SyncState.findOne(SYNC_TOKEN_ID);
-    let result = connection.call('syncNewPackageData', syncToken);
 
-    while (!result.upToDate) {
+    while (true) {
       var error, insertedId, numberAffected;
+
+      const result = connection.call('syncNewPackageData', syncToken);
+      if (!isTokenNewer(syncToken, result.syncToken)) {
+        busy = false;
+        break;
+      }
+
+      syncToken = result.syncToken;
 
       loggingEnabled && console.log('Running packages sync for:', syncToken);
 
@@ -272,15 +285,14 @@ const syncPackages = () => {
         }
       );
 
-      result = connection.call('syncNewPackageData', result.syncToken);
-    }
-
-    if (result.upToDate) {
-      loggingEnabled && console.log('Finished Syncing Packages');
-      if (!isSyncCompleted()) {
-        setSyncCompleted();
-        deriveLatestPackagesFromVersions();
-        syncStats();
+      if (result.upToDate) {
+        loggingEnabled && console.log('Finished Syncing Packages');
+        if (!isSyncCompleted()) {
+          setSyncCompleted();
+          deriveLatestPackagesFromVersions();
+          syncStats();
+        }
+        break;
       }
     }
 
