@@ -1,3 +1,4 @@
+import { Meteor } from 'meteor/meteor';
 import { Mongo } from 'meteor/mongo';
 import { DDP } from 'meteor/ddp';
 import { Random } from 'meteor/random';
@@ -60,35 +61,16 @@ PackageServer.rawPackages = PackageServer.Packages.rawCollection();
 PackageServer.rawLatestPackages = PackageServer.LatestPackages.rawCollection();
 PackageServer.rawVersions = PackageServer.Versions.rawCollection();
 
-PackageServer.Versions.after.insert(function (userId, doc) {
-  if (latestPackagesCompleted()) {
-    replaceLatestPackageIfNewer(doc);
-  }
-});
+const callbacks = [];
 
-PackageServer.Versions.after.update(function (userId, doc) {
-  if (latestPackagesCompleted()) {
-    const { id, ...fields } = doc;
-    const modifier = fieldsToModifier(fields);
-    PackageServer.LatestPackages.update(doc._id, modifier);
-  }
-}, { fetchPrevious: false });
-
-PackageServer.Versions.after.remove(function (userId, doc) {
-  if (latestPackagesCompleted()) {
-    const { _id } = doc;
-    const oldPackage = PackageServer.LatestPackages.findOne(_id);
-
-    if (oldPackage) {
-      PackageServer.LatestPackages.remove(_id);
-      const newPackage = determineLatestPackageVersion(oldPackage.packageName);
-
-      if (newPackage) {
-        PackageServer.latestPackages.insert(newPackage);
-      }
+const runCallbacks = () => {
+  Meteor.startup(() => {
+    let cb;
+    while ((cb = callbacks.shift())) {
+      cb();
     }
-  }
-});
+  });
+};
 
 // Version documents provided from Meteor API can contain dots in object keys which
 // is not allowed by MongoDB, so we transform document to a version without them.
@@ -392,6 +374,7 @@ const latestPackagesCompleted = () => {
 
 const setLatestPackagesCompleted = () => {
   PackageServer.SyncState.upsert({ _id: LATEST_PACKAGES_ID }, { complete: true });
+  runCallbacks();
 };
 
 const deriveLatestPackagesFromVersions = async () => {
@@ -513,6 +496,10 @@ const subscribeToStats = () => {
   });
 };
 
+PackageServer.runIfSyncFinished = (callback) => {
+  typeof callback === 'function' && callbacks.push(callback);
+};
+
 PackageServer.startSyncing = function ({ logging = false, sync: { builds = true, releases = true, stats = true } = {} } = {}) {
   loggingEnabled = logging;
   syncOptions = { builds, releases, stats };
@@ -520,7 +507,37 @@ PackageServer.startSyncing = function ({ logging = false, sync: { builds = true,
   new Fiber(async () => {
     stats && subscribeToStats();
     subscribeToPackages();
+
+    if (latestPackagesCompleted()) {
+      runCallbacks();
+    }
   }).run();
 };
+
+PackageServer.runIfSyncFinished(() => {
+  PackageServer.Versions.after.insert(function (userId, doc) {
+    replaceLatestPackageIfNewer(doc);
+  });
+
+  PackageServer.Versions.after.update(function (userId, doc) {
+    const { id, ...fields } = doc;
+    const modifier = fieldsToModifier(fields);
+    PackageServer.LatestPackages.update(doc._id, modifier);
+  }, { fetchPrevious: false });
+
+  PackageServer.Versions.after.remove(function (userId, doc) {
+    const { _id } = doc;
+    const oldPackage = PackageServer.LatestPackages.findOne(_id);
+
+    if (oldPackage) {
+      PackageServer.LatestPackages.remove(_id);
+      const newPackage = determineLatestPackageVersion(oldPackage.packageName);
+
+      if (newPackage) {
+        PackageServer.latestPackages.insert(newPackage);
+      }
+    }
+  });
+});
 
 export { PackageServer };

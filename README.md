@@ -4,10 +4,9 @@ A client for [Meteor Package Server API](https://github.com/meteor/meteor/wiki/M
 
 Creates and syncs all data about packages to local MongoDB collections and keeps them in sync.
 
-- [Meteor Package Server Sync](#meteor-package-server-sync)
-  - [Code Quality](#code-quality)
-  - [Installation](#installation)
-  - [Usage](#usage)
+- [Code Quality](#code-quality)
+- [Installation](#installation)
+- [Usage](#usage)
 
 ## Code Quality
 
@@ -44,7 +43,20 @@ Meteor.startup(function() {
 
 Initial syncing might take quite some time.
 
-Then you can access collections:
+Then on the server you can register code that will only run after the initial data sync has completed with `PackageServer.runIfSyncFinished` . For example it will run directly after the sync completes, and then again subsequently at starup when `PackageServer.startSyncing()` is called. This allows you add things such as collection-hooks that shouldn't run while the initial sync is happening.
+
+```js
+import { Meteor } from "meteor/meteor";
+import { PackageServer } from "meteor/peerlibrary:meteor-packages";
+
+PackageServer.runIfSyncFinished(() => {
+  PackageServer.ReleaseVersions.after.insert((userId, doc) => {
+    Feed.addEvent('Meteor Release', doc.version);
+  })
+});
+```
+
+The following collections can be accessed on the server or client. For the client you'll of course need to publish the necessary data.
 
 - `PackageServer.Packages`
 - `PackageServer.Versions`
@@ -54,7 +66,7 @@ Then you can access collections:
 - `PackageServer.LatestPackages`
 - `PackageServer.stats`
 
-> `LatestPackages` collection is the same as `Versions`, only that it contains only the latest versions of packages.
+> `LatestPackages` collection is the same as `Versions`, except that it contains only the latest versions of packages.
 
 Schema of documents is the same as [described in the documentation](https://github.com/meteor/meteor/wiki/Meteor-Package-Server-API)
 with a couple exceptions.
