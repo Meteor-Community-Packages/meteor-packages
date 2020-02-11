@@ -7,6 +7,7 @@ Creates and syncs all data about packages to local MongoDB collections and keeps
 - [Code Quality](#code-quality)
 - [Installation](#installation)
 - [Usage](#usage)
+- [Types](#types)
 
 ## Code Quality
 
@@ -77,3 +78,7 @@ name is stored as `packageName` key. This is to support package names with `.` i
 2. `Packages` collection will contain 2 additional fields, `directAdds`, and `totalAdds` which are the direct and total install counts for the corresponding package.
 
 3. `Stats` collection adds the date field to the document for ease of querying chronologically.
+
+## Types
+
+While this package isn't currently implemented in Typescript, there are type definitions provided for your convenience in the typings.d.ts file in the root of this project.
