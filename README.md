@@ -64,7 +64,7 @@ The following collections can be accessed on the server or client. For the clien
 - `PackageServer.ReleaseTracks`
 - `PackageServer.ReleaseVersions`
 - `PackageServer.LatestPackages`
-- `PackageServer.stats`
+- `PackageServer.Stats`
 
 > `LatestPackages` collection is the same as `Versions`, except that it contains only the latest versions of packages.
 
