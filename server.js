@@ -386,7 +386,7 @@ const deriveLatestPackagesFromVersions = async () => {
 
   packageNames.forEach((packageName, index) => {
     const latestVersion = determineLatestPackageVersion(packageName);
-    bulk.insert(transformVersionDocument(latestVersion));
+    bulk.insert(latestVersion);
   });
 
   try {
