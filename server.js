@@ -380,7 +380,7 @@ const setLatestPackagesCompleted = () => {
 };
 
 const deriveLatestPackagesFromVersions = async () => {
-  loggingEnabled && console.log('deriving latest packages');
+  loggingEnabled && console.log('Deriving Latest Packages');
   const packageNames = await PackageServer.rawVersions.distinct('packageName');
   const bulk = PackageServer.rawLatestPackages.initializeUnorderedBulkOp();
 
@@ -396,6 +396,7 @@ const deriveLatestPackagesFromVersions = async () => {
   }
 
   setLatestPackagesCompleted();
+  loggingEnabled && console.log('Deriving Latest Packages Done');
 };
 
 const determineLatestPackageVersion = (packageName) => {
