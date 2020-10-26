@@ -293,6 +293,8 @@ const setSyncCompleted = () => {
 };
 
 const syncStats = async () => {
+  if (!syncOptions.stats) return;
+
   const { current, latest } = PackageServer.SyncState.findOne({ _id: STATS_SYNC_ID });
 
   if (current < latest) {
