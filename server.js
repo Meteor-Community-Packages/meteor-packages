@@ -72,6 +72,10 @@ const runCallbacks = () => {
   });
 };
 
+const shouldBypassCollection2 = (collection) => {
+  return collection._c2 ? { bypassCollection2: true } : undefined;
+};
+
 // Version documents provided from Meteor API can contain dots in object keys which
 // is not allowed by MongoDB, so we transform document to a version without them.
 const transformVersionDocument = (document) => {
@@ -131,10 +135,11 @@ const syncPackages = () => {
       let updatedPackages = 0;
 
       const packageRecords = (result.collections && result.collections.packages) || [];
+      const bypassPackagesC2 = shouldBypassCollection2(PackageServer.Packages);
 
       packageRecords.forEach(packageRecord => {
         try {
-          ({ numberAffected, insertedId } = PackageServer.Packages.upsert(packageRecord._id, { $set: packageRecord }));
+          ({ numberAffected, insertedId } = PackageServer.Packages.upsert(packageRecord._id, { $set: packageRecord }, bypassPackagesC2));
           if (insertedId && insertedId === packageRecord._id) {
             newPackages++;
             updatedPackages += numberAffected - 1;
@@ -151,11 +156,12 @@ const syncPackages = () => {
       let updatedVersions = 0;
 
       const versions = (result.collections && result.collections.versions) || [];
+      const bypassVersionsC2 = shouldBypassCollection2(PackageServer.Versions);
 
       versions.forEach(version => {
         try {
           version = transformVersionDocument(version);
-          ({ numberAffected, insertedId } = PackageServer.Versions.upsert(version._id, version));
+          ({ numberAffected, insertedId } = PackageServer.Versions.upsert(version._id, version, bypassVersionsC2));
           if (insertedId) {
             newVersions++;
             updatedVersions += numberAffected - 1;
@@ -172,10 +178,11 @@ const syncPackages = () => {
       let updatedBuilds = 0;
 
       const builds = (result.collections && result.collections.builds) || [];
+      const bypassBuildsC2 = shouldBypassCollection2(PackageServer.Builds);
 
       syncOptions.builds && builds.forEach(build => {
         try {
-          ({ numberAffected, insertedId } = PackageServer.Builds.upsert(build._id, build));
+          ({ numberAffected, insertedId } = PackageServer.Builds.upsert(build._id, build, bypassBuildsC2));
           if (insertedId) {
             newBuilds++;
             updatedBuilds += numberAffected - 1;
@@ -192,10 +199,11 @@ const syncPackages = () => {
       let updatedReleaseTracks = 0;
 
       const releaseTracks = (result.collections && result.collections.releaseTracks) || [];
+      const bypassReleaseTracksC2 = shouldBypassCollection2(PackageServer.ReleaseTracks);
 
       syncOptions.releases && releaseTracks.forEach(releaseTrack => {
         try {
-          ({ numberAffected, insertedId } = PackageServer.ReleaseTracks.upsert(releaseTrack._id, releaseTrack));
+          ({ numberAffected, insertedId } = PackageServer.ReleaseTracks.upsert(releaseTrack._id, releaseTrack, bypassReleaseTracksC2));
           if (insertedId) {
             newReleaseTracks++;
             updatedReleaseTracks += numberAffected - 1;
@@ -212,10 +220,11 @@ const syncPackages = () => {
       let updatedReleaseVersions = 0;
 
       const releaseVersions = (result.collections && result.collections.releaseVersions) || [];
+      const bypassReleaseVersionsC2 = shouldBypassCollection2(PackageServer.ReleaseVersions);
 
       syncOptions.releases && releaseVersions.forEach(releaseVersion => {
         try {
-          ({ numberAffected, insertedId } = PackageServer.ReleaseVersions.upsert(releaseVersion._id, releaseVersion));
+          ({ numberAffected, insertedId } = PackageServer.ReleaseVersions.upsert(releaseVersion._id, releaseVersion, bypassReleaseVersionsC2));
           if (insertedId) {
             newReleaseVersions++;
             updatedReleaseVersions += numberAffected - 1;
@@ -289,7 +298,8 @@ const isSyncCompleted = () => {
 
 const setSyncCompleted = () => {
   syncCompleted = true;
-  PackageServer.SyncState.upsert({ _id: FULL_SYNC_ID }, { complete: true });
+  const bypassC2 = shouldBypassCollection2(PackageServer.SyncState);
+  PackageServer.SyncState.upsert({ _id: FULL_SYNC_ID }, { complete: true }, bypassC2);
 };
 
 const syncStats = async () => {
@@ -375,7 +385,8 @@ const latestPackagesCompleted = () => {
 };
 
 const setLatestPackagesCompleted = () => {
-  PackageServer.SyncState.upsert({ _id: LATEST_PACKAGES_ID }, { complete: true });
+  const bypassC2 = shouldBypassCollection2(PackageServer.SyncState);
+  PackageServer.SyncState.upsert({ _id: LATEST_PACKAGES_ID }, { complete: true }, bypassC2);
   runCallbacks();
 };
 
@@ -413,11 +424,12 @@ const replaceLatestPackageIfNewer = (document) => {
   loggingEnabled && console.log('replacing:', document.packageName);
   const { packageName } = document;
   const existingDocument = PackageServer.LatestPackages.findOne({ packageName });
+  const bypassC2 = shouldBypassCollection2(PackageServer.LatestPackages);
 
   if (existingDocument && PackageVersion.lessThan(existingDocument.version, document.version)) {
     PackageServer.LatestPackages.remove(existingDocument);
   }
-  PackageServer.LatestPackages.insert(document);
+  PackageServer.LatestPackages.insert(document, bypassC2);
 };
 
 let connection = null;
@@ -437,13 +449,15 @@ const subscribeToPackages = () => {
   const Changes = new Mongo.Collection('changes', connection);
 
   connection.subscribe('defaults', () => {
+    const bypassC2 = shouldBypassCollection2(PackageServer.SyncState);
     PackageServer.SyncState.upsert(
       { _id: SYNC_TOKEN_ID },
       {
         $setOnInsert: {
           syncToken: Defaults.findOne().syncToken,
         },
-      }
+      },
+      bypassC2
     );
 
     connection.subscribe('changes', () => {
@@ -471,6 +485,7 @@ const subscribeToStats = () => {
     Stats.find({}).observe({
       added: document => {
         const { earliest, latest } = document;
+        const bypassC2 = shouldBypassCollection2(PackageServer.SyncState);
         PackageServer.SyncState.upsert(
           { _id: STATS_SYNC_ID },
           {
@@ -481,6 +496,7 @@ const subscribeToStats = () => {
               current: new Date(earliest.replace('-', '/')),
             },
           },
+          bypassC2
         );
         if (isSyncCompleted()) {
           syncStats();
@@ -537,10 +553,11 @@ PackageServer.runIfSyncFinished(() => {
       const newPackage = determineLatestPackageVersion(oldPackage.packageName);
 
       if (newPackage) {
-        PackageServer.latestPackages.insert(newPackage);
+        const bypassC2 = shouldBypassCollection2(PackageServer.LatestPackages);
+        PackageServer.LatestPackages.insert(newPackage, bypassC2);
       }
     }
   });
 });
 
-export { PackageServer };
+export { PackageServer, fieldsToModifier };
