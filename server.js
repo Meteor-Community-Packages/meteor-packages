@@ -3,7 +3,7 @@ import { Mongo } from 'meteor/mongo';
 import { DDP } from 'meteor/ddp';
 import { Random } from 'meteor/random';
 import { PackageVersion } from 'meteor/package-version-parser';
-import { HTTP } from 'meteor/http';
+import { fetch } from 'meteor/fetch';
 
 import Fiber from 'fibers';
 
@@ -317,8 +317,9 @@ const syncStats = async () => {
         const dateString = `${current.getFullYear()}-${(current.getMonth() + 1).toString().padStart(2, 0)}-${current.getDate().toString().padStart(2, 0)}`;
         loggingEnabled && console.log('Syncing Stats For ', dateString);
         const statsUrl = `${URL}/stats/v1/${dateString}`;
-        const response = HTTP.get(statsUrl);
-        const content = response.content.trim();
+        const response = await fetch(statsUrl);
+        const text = await response.text();
+        const content = text.trim();
         let stats = content.length ? content.split('\n') : [];
 
         // stats is an array of strings because someone at MDG forgot JSON exists.
