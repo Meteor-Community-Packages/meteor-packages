@@ -1,4 +1,9 @@
 {
+  "name": "meteor-packages",
+  "version": "1.0.0",
+  "scripts": {
+    "publish-release": "rimraf ./node_modules && meteor publish && meteor npm i --only=dev"
+  },
   "devDependencies": {
     "babel-eslint": "^10.0.1",
     "eslint": "^5.16.0",
@@ -7,7 +12,8 @@
     "eslint-plugin-import": "^2.16.0",
     "eslint-plugin-node": "^8.0.1",
     "eslint-plugin-promise": "^4.0.1",
-    "eslint-plugin-standard": "^4.0.0"
+    "eslint-plugin-standard": "^4.0.0",
+    "rimraf": "^3.0.2"
   },
   "prettier": {
     "printWidth": 120
