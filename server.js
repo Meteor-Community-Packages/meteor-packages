@@ -313,11 +313,12 @@ const syncStats = async () => {
     while (current <= latest) { // eslint-disable-line
       let statsBatch = PackageServer.rawStats.initializeOrderedBulkOp();
       let packagesBatch = PackageServer.rawPackages.initializeOrderedBulkOp();
-      try {
-        const dateString = `${current.getFullYear()}-${(current.getMonth() + 1).toString().padStart(2, 0)}-${current.getDate().toString().padStart(2, 0)}`;
-        loggingEnabled && console.log('Syncing Stats For ', dateString);
-        const statsUrl = `${URL}/stats/v1/${dateString}`;
-        const response = await fetch(statsUrl);
+      const dateString = `${current.getFullYear()}-${(current.getMonth() + 1).toString().padStart(2, 0)}-${current.getDate().toString().padStart(2, 0)}`;
+      loggingEnabled && console.log('Syncing Stats For ', dateString);
+      const statsUrl = `${URL}/stats/v1/${dateString}`;
+      const response = await fetch(statsUrl);
+
+      if (response.status === 200) {
         const text = await response.text();
         const content = text.trim();
         let stats = content.length ? content.split('\n') : [];
@@ -336,13 +337,6 @@ const syncStats = async () => {
           await statsBatch.execute();
           await packagesBatch.execute();
         }
-      } catch (error) {
-        if (!(error.response && error.response.statusCode === 404)) {
-          console.log(error);
-        }
-        /*
-            We just ignore the error if it's a 404 from the package server. Must be due to not having stats for a certain day?
-          */
       }
 
       // update the last date of packages stats that we have processed
