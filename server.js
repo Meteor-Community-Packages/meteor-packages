@@ -425,7 +425,7 @@ const setLatestPackageFromVersion = (packageName) => {
     PackageServer.LatestPackages.insert(newestPackage, bypassC2);
   } else if (newestPackage && existingDocument._id !== newestPackage._id) {
     loggingEnabled && console.log(`Latest Package for ${packageName} changed from ${existingDocument.version} to ${newestPackage.version}`);
-    PackageServer.LatestPackages.remove({ PackageName });
+    PackageServer.LatestPackages.remove({ packageName });
     PackageServer.LatestPackages.insert(newestPackage, bypassC2);
   };
 };
