@@ -9,7 +9,7 @@ Package.describe({
 Package.onUse(function (api) {
   api.versionsFrom('1.8');
   api.use(['ecmascript', 'fetch', 'random', 'mongo', 'ddp', 'underscore', 'package-version-parser']);
-  api.use('matb33:collection-hooks@0.8.0 || 1.0.0');
+  api.use('matb33:collection-hooks@1.1.0');
   api.mainModule('client.js', 'client');
   api.mainModule('server.js', 'server');
 });
