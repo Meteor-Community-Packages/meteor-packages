@@ -415,16 +415,19 @@ const determineLatestPackageVersion = (packageName) => {
   return newestPackage;
 };
 
-const replaceLatestPackageIfNewer = (document) => {
-  loggingEnabled && console.log('replacing:', document.packageName);
-  const { packageName } = document;
-  const existingDocument = PackageServer.LatestPackages.findOne({ packageName });
+const setLatestPackageFromVersion = (packageName) => {
+  const existingDocument = PackageServer.LatestPackages.findOne({ packageName }, { sort: { published: -1 } });
+  const newestPackage = determineLatestPackageVersion(packageName);
   const bypassC2 = shouldBypassCollection2(PackageServer.LatestPackages);
 
-  if (existingDocument && PackageVersion.lessThan(existingDocument.version, document.version)) {
-    PackageServer.LatestPackages.remove(existingDocument);
-  }
-  PackageServer.LatestPackages.insert(document, bypassC2);
+  if (!existingDocument) {
+    loggingEnabled && console.log(`Latest Package for ${packageName} set to ${newestPackage.version}`);
+    PackageServer.LatestPackages.insert(newestPackage, bypassC2);
+  } else if (newestPackage && existingDocument._id !== newestPackage._id) {
+    loggingEnabled && console.log(`Latest Package for ${packageName} changed from ${existingDocument.version} to ${newestPackage.version}`);
+    PackageServer.LatestPackages.remove({ PackageName });
+    PackageServer.LatestPackages.insert(newestPackage, bypassC2);
+  };
 };
 
 let connection = null;
@@ -530,7 +533,7 @@ PackageServer.startSyncing = function ({ logging = false, sync: { builds = true,
 
 PackageServer.runIfSyncFinished(() => {
   PackageServer.Versions.after.insert(function (userId, doc) {
-    replaceLatestPackageIfNewer(doc);
+    setLatestPackageFromVersion(doc.packageName);
   });
 
   PackageServer.Versions.after.update(function (userId, doc) {
