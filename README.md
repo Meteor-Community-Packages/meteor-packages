@@ -33,6 +33,7 @@ Meteor.startup(function() {
   PackageServer.startSyncing({
     //options - the following are the defaults if not passed
     logging: false, // When true, informational log messages will be printed to the console
+    batchSize: 500, // Number of packages to process per batch (lower = less memory usage)
     sync: {
       builds: true, // Should information about package builds be stored
       releases: true, // Should information about Meteor releases and release tracks be stored
@@ -43,6 +44,14 @@ Meteor.startup(function() {
 ```
 
 Initial syncing might take quite some time.
+
+### Memory Optimization
+
+The sync process has been optimized for memory efficiency. If you're running on a system with limited memory:
+
+- Reduce `batchSize` (e.g., `batchSize: 100`) to process fewer packages at a time
+- Enable `logging: true` to monitor progress
+- The sync uses cursor-based pagination and processes packages in chunks to avoid loading all data into memory at once
 
 Then on the server you can register code that will only run after the initial data sync has completed with `PackageServer.runIfSyncFinished` . For example it will run directly after the sync completes, and then again subsequently at starup when `PackageServer.startSyncing()` is called. This allows you add things such as collection-hooks that shouldn't run while the initial sync is happening.
 

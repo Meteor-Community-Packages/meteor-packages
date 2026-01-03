@@ -1,7 +1,7 @@
 declare module 'meteor/peerlibrary:meteor-packages' {
   import { Mongo } from 'meteor/mongo';
   class PackageServer {
-    static startSyncing(options?: { logging?: boolean, sync?: { builds?: boolean, realeases?: boolean, stats?: boolean } }): void
+    static startSyncing(options?: { logging?: boolean, batchSize?: number, sync?: { builds?: boolean, releases?: boolean, stats?: boolean } }): void
     static runIfSyncFinished: (callback: () => void) => void;
     static Packages: Mongo.Collection<Package>
     static LatestPackages: Mongo.Collection<LatestPackage>
