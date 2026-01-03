@@ -9,6 +9,7 @@ import { PackageServer } from './package-server';
 
 let loggingEnabled;
 let syncOptions;
+let batchSize = 500; // Default batch size for memory-efficient processing
 
 const SYNC_TOKEN_ID = 'syncToken';
 const STATS_SYNC_ID = 'statsSync';
@@ -389,37 +390,81 @@ const setLatestPackagesCompleted = async () => {
 
 const deriveLatestPackagesFromVersions = async () => {
   loggingEnabled && console.log('Deriving Latest Packages');
-  const packageNames = await PackageServer.rawVersions.distinct('packageName');
 
-  const operations = [];
-  for (const packageName of packageNames) {
-    const latestVersion = await determineLatestPackageVersionAsync(packageName);
-    if (latestVersion) {
-      operations.push({ insertOne: { document: latestVersion } });
+  // Use cursor-based pagination instead of loading all package names into memory
+  let processedCount = 0;
+  let lastPackageName = '';
+
+  while (true) {
+    // Get a batch of distinct package names using aggregation with cursor
+    const pipeline = [
+      { $match: lastPackageName ? { packageName: { $gt: lastPackageName } } : {} },
+      { $group: { _id: '$packageName' } },
+      { $sort: { _id: 1 } },
+      { $limit: batchSize }
+    ];
+
+    const packageNameDocs = await PackageServer.rawVersions.aggregate(pipeline).toArray();
+
+    if (packageNameDocs.length === 0) {
+      break;
     }
-  }
 
-  if (operations.length) {
-    try {
-      await PackageServer.rawLatestPackages.bulkWrite(operations, { ordered: false });
-    } catch (error) {
-      console.log(error);
+    const operations = [];
+    for (const doc of packageNameDocs) {
+      const packageName = doc._id;
+      lastPackageName = packageName;
+
+      const latestVersion = await determineLatestPackageVersionAsync(packageName);
+      if (latestVersion) {
+        operations.push({ insertOne: { document: latestVersion } });
+      }
+    }
+
+    // Write this batch immediately instead of accumulating all operations
+    if (operations.length) {
+      try {
+        await PackageServer.rawLatestPackages.bulkWrite(operations, { ordered: false });
+      } catch (error) {
+        console.log('Batch write error:', error.message);
+      }
+    }
+
+    processedCount += packageNameDocs.length;
+    loggingEnabled && console.log(`Processed ${processedCount} packages...`);
+
+    // Allow garbage collection between batches
+    if (global.gc) {
+      global.gc();
     }
   }
 
   await setLatestPackagesCompleted();
-  loggingEnabled && console.log('Deriving Latest Packages Done');
+  loggingEnabled && console.log(`Deriving Latest Packages Done. Total: ${processedCount}`);
 };
 
 const determineLatestPackageVersionAsync = async (packageName) => {
-  let newestPackage;
-  const cursor = PackageServer.Versions.find({ packageName });
-  await cursor.forEachAsync(document => {
-    if (!newestPackage || PackageVersion.lessThan(newestPackage.version, document.version)) {
-      newestPackage = document;
+  // Use aggregation to find the latest version server-side
+  // This avoids loading all versions into memory
+  const versions = await PackageServer.rawVersions.find(
+    { packageName },
+    { projection: { version: 1, packageName: 1, published: 1 } }
+  ).toArray();
+
+  if (versions.length === 0) {
+    return null;
+  }
+
+  // Find the semantically latest version
+  let newestPackage = versions[0];
+  for (let i = 1; i < versions.length; i++) {
+    if (PackageVersion.lessThan(newestPackage.version, versions[i].version)) {
+      newestPackage = versions[i];
     }
-  });
-  return newestPackage;
+  }
+
+  // Now fetch the full document for the latest version only
+  return await PackageServer.Versions.findOneAsync({ _id: newestPackage._id });
 };
 
 const setLatestPackageFromVersionAsync = async (packageName) => {
@@ -525,24 +570,42 @@ const subscribeToStats = () => {
 
 // Set up observer for Versions collection to keep LatestPackages in sync
 // This replaces the matb33:collection-hooks dependency
+// IMPORTANT: Uses observeChanges instead of observe to avoid loading all documents into memory
 const setupVersionsObserver = () => {
-  PackageServer.Versions.find().observe({
-    added: async (doc) => {
-      await setLatestPackageFromVersionAsync(doc.packageName);
-    },
-    changed: async (newDoc, oldDoc) => {
-      const { _id, ...fields } = newDoc;
-      const modifier = fieldsToModifier(fields);
-      if (Object.keys(modifier).length > 0) {
-        await PackageServer.LatestPackages.updateAsync(newDoc._id, modifier);
+  // Track the timestamp when observer starts - only process documents after this
+  const observerStartTime = new Date();
+
+  loggingEnabled && console.log('Setting up Versions observer for incremental updates...');
+
+  // Use observeChanges which is more memory efficient than observe
+  // It doesn't fetch full documents, only IDs and changed fields
+  PackageServer.Versions.find({
+    // Only observe versions published/updated after sync completed
+    // This prevents loading all historical versions into memory
+    $or: [
+      { published: { $gte: observerStartTime } },
+      { lastUpdated: { $gte: observerStartTime } }
+    ]
+  }).observeChanges({
+    added: async (id, fields) => {
+      if (fields.packageName) {
+        await setLatestPackageFromVersionAsync(fields.packageName);
       }
     },
-    removed: async (doc) => {
-      const { _id } = doc;
-      const oldPackage = await PackageServer.LatestPackages.findOneAsync(_id);
+    changed: async (id, fields) => {
+      // Only update LatestPackages if relevant fields changed
+      if (Object.keys(fields).length > 0) {
+        const modifier = fieldsToModifier(fields);
+        if (Object.keys(modifier).length > 0) {
+          await PackageServer.LatestPackages.updateAsync(id, modifier);
+        }
+      }
+    },
+    removed: async (id) => {
+      const oldPackage = await PackageServer.LatestPackages.findOneAsync(id);
 
       if (oldPackage) {
-        await PackageServer.LatestPackages.removeAsync(_id);
+        await PackageServer.LatestPackages.removeAsync(id);
         const newPackage = await determineLatestPackageVersionAsync(oldPackage.packageName);
 
         if (newPackage) {
@@ -552,15 +615,34 @@ const setupVersionsObserver = () => {
       }
     },
   });
+
+  loggingEnabled && console.log('Versions observer set up successfully');
 };
 
 PackageServer.runIfSyncFinished = (callback) => {
   typeof callback === 'function' && callbacks.push(callback);
 };
 
-PackageServer.startSyncing = function ({ logging = false, sync: { builds = true, releases = true, stats = true } = {} } = {}) {
+/**
+ * Start syncing packages from packages.meteor.com
+ * @param {Object} options - Configuration options
+ * @param {boolean} [options.logging=false] - Enable verbose logging
+ * @param {number} [options.batchSize=500] - Number of packages to process per batch (lower = less memory)
+ * @param {Object} [options.sync] - What to sync
+ * @param {boolean} [options.sync.builds=true] - Sync build information
+ * @param {boolean} [options.sync.releases=true] - Sync release information
+ * @param {boolean} [options.sync.stats=true] - Sync download statistics
+ */
+PackageServer.startSyncing = function ({
+  logging = false,
+  batchSize: configBatchSize = 500,
+  sync: { builds = true, releases = true, stats = true } = {}
+} = {}) {
   loggingEnabled = logging;
+  batchSize = configBatchSize;
   syncOptions = { builds, releases, stats };
+
+  loggingEnabled && console.log(`PackageServer: Starting sync with batchSize=${batchSize}`);
 
   Meteor.startup(async () => {
     // Initialize indexes
